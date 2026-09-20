@@ -83,3 +83,5 @@ Google roof measurement is also pending. Keep manual area/pitch inputs working. 
 Run `npm ci`, `npm test`, `npm run build`, `npm audit --omit=dev --audit-level=high` and `docker build`. Tests cover pricing invariants, sources/material mapping, approval retry identity, bridge sessions/origins and production auth/spend limits. CI runs these commands without provider credentials. Paid/live-provider verification is separate.
 
 See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for staging, secrets, DNS/TLS, health and rollback. See [HANDOFF.md](docs/HANDOFF.md) for current delivery evidence and outstanding work. The portal has newer live changes that are not fully represented in its last published main; never replace its production tree from an old clone without reconciling those changes.
+
+Production routing detail: every research/estimate request pins X-Headroom-Base-Url to https://api.openai.com. The shared proxy defaults to OpenRouter for other applications; omitting this header rejects the OpenAI key. This changes only the quote requests, not shared proxy configuration.
