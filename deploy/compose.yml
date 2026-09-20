@@ -1,0 +1,29 @@
+services:
+  quote:
+    image: revive-quote-assistant:${RELEASE_SHA:?Set the verified release commit}
+    container_name: revive-quote-assistant
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - /docker/revive-quote-assistant/shared/.env
+    environment:
+      NODE_ENV: production
+      APP_ORIGIN: https://quote.reviverepairco.com
+      PORTAL_API_URL: https://portal.reviverepairco.com/api/v1
+      OPENAI_BASE_URL: http://100.82.54.127:8877/v1
+      PORT: '4182'
+      BIND_HOST: 127.0.0.1
+      RELEASE_SHA: ${RELEASE_SHA}
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 1
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'

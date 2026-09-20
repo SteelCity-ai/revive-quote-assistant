@@ -1,0 +1,12 @@
+import {useEffect,useState} from 'react';
+import {portalRequest} from './portal';
+import type {PortalStatus} from './portal';
+export default function PortalConnection({onStatus}:{onStatus?:(s:PortalStatus)=>void}){
+  const [status,setStatus]=useState<PortalStatus|null>(null),[email,setEmail]=useState(''),[password,setPassword]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  const secure=window.isSecureContext;
+  const refresh=async()=>{try{const s=await portalRequest<PortalStatus>('status');setStatus(s);onStatus?.(s);setError(s.error||'');}catch(e){const s={configured:true,user:null,ready:false};setStatus(s);onStatus?.(s);setError((e as Error).message);}};
+  useEffect(()=>{void refresh();},[]);
+  const login=async()=>{if(!secure){setError('Portal sign-in requires HTTPS on a phone, or localhost on this computer.');return;}setBusy(true);setError('');try{await portalRequest('login',{email,password});setPassword('');await refresh();}catch(e){setError((e as Error).message);}finally{setBusy(false);}};
+  const logout=async()=>{setBusy(true);try{await portalRequest('logout',{});window.dispatchEvent(new Event('revive-session-expired'));await refresh();}catch(e){setError((e as Error).message);}finally{setBusy(false);}};
+  return <section className="portal-connection"><h3>Revive Portal account</h3>{!status?<p>Checking connection…</p>:status.user?<><p>Signed in as <strong>{status.user.displayName}</strong></p><p>{status.ready?'Quote saving is available.':'Signed in; quote saving is not available yet.'}</p><button className="text-button" disabled={busy} onClick={()=>void logout()}>Sign out on this device</button></>:<form onSubmit={e=>{e.preventDefault();void login();}}><p>Use your existing portal administrator account. Your password is passed to the portal and is not saved.</p><label className="field"><span>Portal email</span><input type="email" autoComplete="username" required value={email} onChange={e=>setEmail(e.target.value)}/></label><label className="field"><span>Portal password</span><input type="password" autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)}/></label><button className="secondary full" disabled={busy}>{busy?'Signing in…':'Sign in to Revive Portal'}</button></form>}{error&&<p role="alert" className="portal-error">{error}</p>}<button className="text-button" disabled={busy} onClick={()=>void refresh()}>Check connection</button></section>;
+}
