@@ -6,7 +6,7 @@ The quote assistant is an independent mobile browser app at its own future addre
 
 ## Portal
 
-Portal implementation is in `C:\Users\mike\.codex\workspaces\revive-portal-quote-sync`, branch `codex/quote-portal-sync`, based on remote main `fa51149` from `SteelCity-ai/revive-project-portal-VPS`. The live release is pending; see `PORTAL-SYNC.md` and the portal's `docs/QUOTE-ASSISTANT-INTEGRATION.md`.
+Portal APIs belong to `SteelCity-ai/revive-project-portal-VPS`; this standalone app belongs to `SteelCity-ai/revive-quote-assistant`. Live portal quote capabilities and storage were verified on 2026-09-20. See `PORTAL-SYNC.md`, `HANDOFF.md` and both repositories' `ARCHITECTURE.md` files for current source/deployment boundaries.
 
 The server adapter now supports portal administrator login, explicit customer selection, restricted routes, origin checks and idempotent approval. Approval stores an immutable estimate revision/PDF and creates one pending project. Customer acceptance activates that same project and creates the SOW draft/PDF for the existing SOW Intake. The browser receives an opaque session cookie; upstream session credentials stay on the server. Non-localhost login requires HTTPS.
 
@@ -27,7 +27,7 @@ References: https://developers.google.com/maps/documentation/solar/overview and 
 
 ## AI pricing research — implemented locally
 
-The private Node API now performs live web research and generates structured priced drafts, material lists and source-linked comparisons. See AI-ESTIMATING.md for implementation and remaining production requirements. Prices remain editable and final quote approval remains manual. Portal integration is implemented locally; its live release is pending.
+The Node API performs live web research and generates structured priced drafts, material lists and source-linked comparisons. See AI-ESTIMATING.md for implementation details. Prices remain editable and final quote approval remains manual. Production paid calls require current portal administrator authentication; confirmed portal saves create pending projects. See HANDOFF.md for public DNS/TLS status.
 
 ## Delivery
 

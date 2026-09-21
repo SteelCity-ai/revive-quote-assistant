@@ -27,7 +27,9 @@ The verified key file is `C:\Users\mike\.codex\workspaces\revive-quote-assistant
 
 Default OpenAI route: `http://127.0.0.1:8790/v1` through the existing Headroom proxy. Dashboard: http://127.0.0.1:8790/dashboard . A positive configured status means the server found a key; actual provider failures appear during generation.
 
-The preview API enforces exact local origins, JSON/body limits, schema validation, one active estimate at a time, 12 requests/hour and a four-minute timeout. It does not retry billed calls automatically. It binds only to loopback and is accessed through Vite's proxy. This remains a local preview, not an authenticated public deployment. Cloud storage, production authentication, reverse proxy configuration, per-user limits and audit storage are still needed before publishing.
+Development uses Vite's proxy and loopback API. Production uses the compiled frontend and Node server behind Traefik HTTPS, an exact APP_ORIGIN, current portal administrator authentication, JSON/body limits, schema validation, one active estimate at a time, 12 requests per account/hour and a four-minute timeout. It does not retry billed calls automatically. Shared draft storage, distributed session/rate-limit storage and durable AI audit records remain future work; see ARCHITECTURE.md.
+
+On the VPS, requests use `http://100.82.54.127:8877/v1` and explicitly pin `X-Headroom-Base-Url: https://api.openai.com` because the shared Headroom instance defaults to OpenRouter for other apps. A real synthetic estimate passed through this route on 2026-09-20. Production secrets are in the root-only VPS environment file; the C: key file above describes historical local setup, not a file committed to this repository.
 
 OpenAI API usage and web search incur charges on the configured API account. No email/SMS delivery, supplier contact or purchase occurs.
 
