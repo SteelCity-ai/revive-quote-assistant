@@ -38,7 +38,7 @@ Deployment evidence is below. A server health check does not prove the user's ph
 
 ## Remaining work
 
-1. Conversational voice: **Talk to Revive**, spoken questions, automatic end-of-turn detection, extracted/validated answers, corrections, spoken review and distinct confirmation. Nothing in the current UI implements voice yet; see the architecture acceptance notes.
+1. Conversational voice: **implemented on `feat/voice-conversation` (2026-09-21), not deployed.** OpenAI Realtime over WebRTC with server-minted ephemeral tokens, semantic VAD, strict tools, validated answers, verbatim read-back + fingerprint-tied approval on the idempotent portal path. Headroom cannot carry the realtime transport (404 on `/v1/realtime/client_secrets`, verified 2026-09-21) so voice mints directly against api.openai.com while research/estimate keep Headroom routing; see `docs/VOICE.md`. Staging verification with a real realtime session, real-device microphone/Bluetooth/background checks and deployment remain outstanding — nothing voice-related is "verified working" until then.
 2. Google roof measurement proposals and measurement provenance.
 3. Cross-device draft storage and safe JSON import (existing exports are backups only).
 4. Actual device/Bluetooth/background/network testing; do not assume hands-free capability from a browser mock.

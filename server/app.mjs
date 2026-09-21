@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {resolve,extname,sep} from 'node:path';
 import {inputSchema,generateEstimate} from './estimate.mjs';
 import {createPortalHandler} from './portal.mjs';
+import {createVoiceHandler} from './voice.mjs';
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.webmanifest':'application/manifest+json','.woff2':'font/woff2','.ico':'image/x-icon'};
 const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
 export function createApp({env=process.env,fetcher=fetch,generate=generateEstimate,staticDir=resolve('dist')}={}){
@@ -12,15 +13,17 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
   const hosts=['localhost','127.0.0.1',...Object.values(os.networkInterfaces()).flat().filter(a=>a?.family==='IPv4').map(a=>a.address)];
   const origins=new Set(production?[env.APP_ORIGIN]:hosts.map(host=>`http://${host}:4178`));
   const portal=createPortalHandler({baseUrl:env.PORTAL_API_URL||'https://portal.reviverepairco.com/api/v1',origins,fetcher,secureCookies:production});
+  const voice=createVoiceHandler({env,fetcher,authenticate:portal.authenticate,origins});
   const windows=new Map();let running=false;
   const server=http.createServer(async(req,res)=>{
     res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');
     res.setHeader('X-Frame-Options','DENY');res.setHeader('Permissions-Policy','camera=(), microphone=(self), geolocation=()');
-    if(production){res.setHeader('Strict-Transport-Security','max-age=31536000');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");}
+    if(production){res.setHeader('Strict-Transport-Security','max-age=31536000');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://api.openai.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");}
     try{
       if(req.url==='/healthz'&&req.method==='GET')return json(res,200,{status:'ok',version:env.RELEASE_SHA||'development'});
-      if(req.url==='/api/app/config'&&req.method==='GET')return json(res,200,{requiresLogin:production,voiceAvailable:false});
+      if(req.url==='/api/app/config'&&req.method==='GET')return json(res,200,{requiresLogin:production,voiceAvailable:!!env.OPENAI_API_KEY});
       if(await portal(req,res))return;
+      if(await voice(req,res))return;
       if(req.url==='/api/ai/status'&&req.method==='GET')return json(res,200,{configured:!!env.OPENAI_API_KEY,model:env.OPENAI_ESTIMATE_MODEL||'gpt-5.4-mini-2026-03-17',researchModel:env.OPENAI_MODEL||'gpt-4.1',webResearch:true});
       if(req.url==='/api/ai/estimate'&&req.method==='POST'){
         if(!origins.has(req.headers.origin))return json(res,403,{error:'Request origin not allowed.'});

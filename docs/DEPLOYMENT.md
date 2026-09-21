@@ -10,6 +10,7 @@
 - Docker image: `revive-quote-assistant:<git-sha>`; service/container: `revive-quote-assistant`.
 - Node binds only `127.0.0.1:4182`, on host networking. Traefik terminates TLS on 443 and forwards to this loopback service. No public dev server.
 - Headroom: `http://100.82.54.127:8877/v1`, private dashboard `/dashboard`.
+- Voice (after `feat/voice-conversation`): the server calls `https://api.openai.com/v1/realtime/client_secrets` directly (Headroom returns 404 for that path) and the browser connects WebRTC to `https://api.openai.com/v1/realtime/calls` (allowed by the production CSP). Optional env: `OPENAI_REALTIME_MODEL` (default `gpt-realtime-2.1`), `OPENAI_REALTIME_VOICE` (default `marin`), `OPENAI_REALTIME_BASE_URL`. Staging checks for voice: `/api/app/config` shows `voiceAvailable`, anonymous `POST /api/voice/session` returns 401, and one authenticated mint attempt succeeds (or fails with a sanitized error if the key lacks realtime access).
 
 ## Release procedure
 
