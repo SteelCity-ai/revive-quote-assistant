@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {resolve,extname,sep} from 'node:path';
 import {inputSchema,generateEstimate} from './estimate.mjs';
 import {createPortalHandler} from './portal.mjs';
+import {createRoofMeasurer} from './roof.mjs';
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.webmanifest':'application/manifest+json','.woff2':'font/woff2','.ico':'image/x-icon'};
 const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
 export function createApp({env=process.env,fetcher=fetch,generate=generateEstimate,staticDir=resolve('dist')}={}){
@@ -12,6 +13,8 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
   const hosts=['localhost','127.0.0.1',...Object.values(os.networkInterfaces()).flat().filter(a=>a?.family==='IPv4').map(a=>a.address)];
   const origins=new Set(production?[env.APP_ORIGIN]:hosts.map(host=>`http://${host}:4178`));
   const portal=createPortalHandler({baseUrl:env.PORTAL_API_URL||'https://portal.reviverepairco.com/api/v1',origins,fetcher,secureCookies:production});
+  const measureRoof=createRoofMeasurer({fetcher,apiKey:env.GOOGLE_SOLAR_API_KEY||''});
+  const roofWindows=new Map();
   const windows=new Map();let running=false;
   const server=http.createServer(async(req,res)=>{
     res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');
@@ -19,8 +22,25 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
     if(production){res.setHeader('Strict-Transport-Security','max-age=31536000');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");}
     try{
       if(req.url==='/healthz'&&req.method==='GET')return json(res,200,{status:'ok',version:env.RELEASE_SHA||'development'});
-      if(req.url==='/api/app/config'&&req.method==='GET')return json(res,200,{requiresLogin:production,voiceAvailable:false});
+      if(req.url==='/api/app/config'&&req.method==='GET')return json(res,200,{requiresLogin:production,voiceAvailable:false,roofMeasurementAvailable:!!env.GOOGLE_SOLAR_API_KEY});
       if(await portal(req,res))return;
+      if(req.url==='/api/roof/measure'&&req.method==='POST'){
+        if(!origins.has(req.headers.origin))return json(res,403,{error:'Request origin not allowed.'});
+        if(!req.headers['content-type']?.startsWith('application/json'))return json(res,415,{error:'Use application/json.'});
+        let identity=req.socket.remoteAddress;
+        if(production){const user=await portal.authenticate(req);identity=user.userId||user.id||user.email;if(!identity)return json(res,403,{error:'Your portal account is missing an identity.'});}
+        if(!measureRoof)return json(res,503,{error:'Roof measurement is not configured on the server.'});
+        const now=Date.now();for(const [id,times] of roofWindows)if(times.every(t=>now-t>=3600000))roofWindows.delete(id);
+        const recent=(roofWindows.get(identity)||[]).filter(t=>now-t<3600000);
+        if(recent.length>=30)return json(res,429,{error:'Too many measurement requests this hour. Please wait before retrying.'});
+        let bytes=0;const chunks=[];for await(const chunk of req){bytes+=chunk.length;if(bytes>2000)return json(res,413,{error:'The address is too long.'});chunks.push(chunk);}
+        let body;try{body=JSON.parse(Buffer.concat(chunks).toString());}catch{return json(res,400,{error:'Invalid request.'});}
+        if(typeof body.address!=='string'||!body.address.trim())return json(res,400,{error:'Enter the job address before requesting a measurement.'});
+        roofWindows.set(identity,[...recent,now]);
+        const result=await measureRoof(body.address);
+        if(!result.available)return json(res,422,result);
+        return json(res,200,result);
+      }
       if(req.url==='/api/ai/status'&&req.method==='GET')return json(res,200,{configured:!!env.OPENAI_API_KEY,model:env.OPENAI_ESTIMATE_MODEL||'gpt-5.4-mini-2026-03-17',researchModel:env.OPENAI_MODEL||'gpt-4.1',webResearch:true});
       if(req.url==='/api/ai/estimate'&&req.method==='POST'){
         if(!origins.has(req.headers.origin))return json(res,403,{error:'Request origin not allowed.'});

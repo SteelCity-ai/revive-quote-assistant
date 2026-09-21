@@ -39,7 +39,7 @@ Deployment evidence is below. A server health check does not prove the user's ph
 ## Remaining work
 
 1. Conversational voice: **Talk to Revive**, spoken questions, automatic end-of-turn detection, extracted/validated answers, corrections, spoken review and distinct confirmation. Nothing in the current UI implements voice yet; see the architecture acceptance notes.
-2. Google roof measurement proposals and measurement provenance.
+2. Google roof measurement: implemented (server `/api/roof/measure` via Geocoding + Solar APIs, `GOOGLE_SOLAR_API_KEY`; guide "Measure with Google" button prefills roof area with imagery date/quality provenance and a "Google aerial imagery" source option). Not yet verified with a real key — needs a real-key live check and staging verification before release.
 3. Cross-device draft storage and safe JSON import (existing exports are backups only).
 4. Actual device/Bluetooth/background/network testing; do not assume hands-free capability from a browser mock.
 5. Optional email/SMS delivery with recipient confirmation, audit history and retries.

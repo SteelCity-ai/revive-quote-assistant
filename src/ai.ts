@@ -15,6 +15,14 @@ export async function generate(q:Quote,signal:AbortSignal):Promise<{report:AIRep
   const lines=report.items.map((item,i)=>({id:`ai-${Date.now()}-${i}`,description:item.description,quantity:item.quantity,unit:item.unit,material:item.unitCost,hours:item.laborHours,rate:item.hourlyRate}));
   return {report:{...report,fingerprint:fingerprint(q),lineIds:lines.map(l=>l.id),resolvedQuestions:[]},lines};
 }
+export type RoofMeasure={available:boolean;reason?:string;formattedAddress?:string;roofAreaSqFt?:number;footprintSqFt?:number;imageryDate?:string|null;imageryQuality?:string;};
+export async function measureRoof(address:string,signal:AbortSignal):Promise<RoofMeasure>{
+  const response=await fetch('/api/roof/measure',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address}),signal});
+  let data:RoofMeasure;try{data=await response.json();}catch{throw new Error('The measurement service is unavailable. Measure manually instead.');}
+  if(response.status===401)window.dispatchEvent(new Event('revive-session-expired'));
+  if(!response.ok)throw new Error(data.reason||(data as {error?:string}).error||'The measurement could not be completed. Measure manually instead.');
+  return data;
+}
 export function comparisonRange(report:AIReport){
   return report.benchmarks.filter(b=>b.scopeMatch==='whole-project').flatMap(b=>{const divisor=b.unit==='sq ft'?1:b.projectArea;if(!divisor||divisor<=0)return [];return [{low:b.low/divisor,high:b.high/divisor}];});
 }

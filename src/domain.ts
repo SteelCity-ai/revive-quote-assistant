@@ -32,7 +32,7 @@ export function questions(type: JobType, a: Answers): Question[] {
     if (answerText(a, 'measurementMode') !== 'Not sure yet') {
       result.push(q('roofArea', 'How large is the area being quoted?', answerText(a, 'measurementMode') === 'Building footprint + roof pitch' ? 'Enter the horizontal footprint. We’ll use pitch to estimate roof surface area. For mixed pitches, use separately measured surface areas instead.' : 'Enter the actual roof surface area, including slope. For a repair, enter only the affected area.', 'number', 'Measurements', { unit: 'sq ft', unknown: true }));
       if (answerText(a, 'measurementMode') === 'Building footprint + roof pitch') result.push(q('pitch', 'What is the roof pitch?', 'Enter inches of rise per 12 inches of run. Use 0 for a flat roof, 4 for a 4:12 pitch.', 'number', 'Measurements', { unit: '/ 12', unknown: true }));
-      result.push(q('measurementSource', 'Where did these measurements come from?', 'Keep a clear record of how the roof was measured.', 'choice', 'Measurements', { options: ['Field measured', 'Plans / drawings', 'Aerial report', 'Rough estimate'], unknown: true }));
+      result.push(q('measurementSource', 'Where did these measurements come from?', 'Keep a clear record of how the roof was measured.', 'choice', 'Measurements', { options: ['Google aerial imagery', 'Field measured', 'Plans / drawings', 'Aerial report', 'Rough estimate'], unknown: true }));
     }
     if (answerText(a, 'roofWork') === 'Replacement') result.push(q('layers', 'How many layers need to come off?', 'This affects labor, disposal and the condition of the exposed deck.', 'choice', 'Roof scope', { options: ['1 layer', '2 layers', '3 or more layers', 'Overlay — no tear-off'], unknown: true }));
     result.push(
