@@ -5,6 +5,7 @@ import {resolve,extname,sep} from 'node:path';
 import {inputSchema,generateEstimate} from './estimate.mjs';
 import {createPortalHandler} from './portal.mjs';
 import {createRoofMeasurer} from './roof.mjs';
+import {createVoiceHandler} from './voice.mjs';
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.webmanifest':'application/manifest+json','.woff2':'font/woff2','.ico':'image/x-icon'};
 const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
 export function createApp({env=process.env,fetcher=fetch,generate=generateEstimate,staticDir=resolve('dist')}={}){
@@ -15,15 +16,17 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
   const portal=createPortalHandler({baseUrl:env.PORTAL_API_URL||'https://portal.reviverepairco.com/api/v1',origins,fetcher,secureCookies:production});
   const measureRoof=createRoofMeasurer({fetcher,apiKey:env.GOOGLE_SOLAR_API_KEY||''});
   const roofWindows=new Map();
+  const voice=createVoiceHandler({env,fetcher,authenticate:portal.authenticate,origins});
   const windows=new Map();let running=false;
   const server=http.createServer(async(req,res)=>{
     res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');
     res.setHeader('X-Frame-Options','DENY');res.setHeader('Permissions-Policy','camera=(), microphone=(self), geolocation=()');
-    if(production){res.setHeader('Strict-Transport-Security','max-age=31536000');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");}
+    if(production){res.setHeader('Strict-Transport-Security','max-age=31536000');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://api.openai.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");}
     try{
       if(req.url==='/healthz'&&req.method==='GET')return json(res,200,{status:'ok',version:env.RELEASE_SHA||'development'});
-      if(req.url==='/api/app/config'&&req.method==='GET')return json(res,200,{requiresLogin:production,voiceAvailable:false,roofMeasurementAvailable:!!env.GOOGLE_SOLAR_API_KEY});
+      if(req.url==='/api/app/config'&&req.method==='GET')return json(res,200,{requiresLogin:production,voiceAvailable:!!env.OPENAI_API_KEY,roofMeasurementAvailable:!!env.GOOGLE_SOLAR_API_KEY});
       if(await portal(req,res))return;
+      if(await voice(req,res))return;
       if(req.url==='/api/roof/measure'&&req.method==='POST'){
         if(!origins.has(req.headers.origin))return json(res,403,{error:'Request origin not allowed.'});
         if(!req.headers['content-type']?.startsWith('application/json'))return json(res,415,{error:'Use application/json.'});

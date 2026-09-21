@@ -1,0 +1,264 @@
+import {describe,it,expect,vi} from 'vitest';
+import {parseNumber,matchChoice,evaluateSetAnswer,evaluateSetAnswerOptions,evaluateMarkUnknown,nextQuestion,voiceReadBack,approvalBlockers,prepareVoiceApproval,confirmVoiceApproval,buildVoiceContext,createVoiceController,isMissing} from './voice';
+import {makeQuote,questions,initialLines,totals,money} from './domain';
+import type {Quote,JobType} from './domain';
+
+const pricing={laborRate:50,markup:15,contingency:10,tax:6};
+const roofingQuote=():Quote=>{
+  const quote=makeQuote('roofing',pricing);
+  quote.answers={customer:'ACME Holdings',title:'Elm St roof',address:'12 Elm St, Harrisburg, PA 17101',roofWork:'Replacement',roofSystem:'TPO / PVC membrane',measurementMode:'Measured roof surface area',roofArea:'2400',measurementSource:'Field measured',layers:'1 layer',condition:'Some ponding near the drain.',details:'One curb, two drains.',access:'Single story, driveway access.',waste:'10',schedule:'Within 60 days',permits:'Included in our scope'};
+  return quote;
+};
+
+describe('answer extraction',()=>{
+  it('parses spoken-style numbers, commas, units and pitch fractions',()=>{
+    expect(parseNumber('2,400 sq ft')).toBe(2400);
+    expect(parseNumber('4/12')).toBe(4);
+    expect(parseNumber('about 15 percent')).toBe(15);
+    expect(parseNumber('no idea')).toBeNull();
+  });
+  it('matches choice options despite casing and punctuation',()=>{
+    const options=['Replacement','Repair','Coating / restoration','New installation'];
+    expect(matchChoice('replacement',options)).toBe('Replacement');
+    expect(matchChoice('Coating restoration!',options)).toBe('Coating / restoration');
+    expect(matchChoice('gutter work',options)).toBeNull();
+  });
+  it('validates answers against the existing domain rules',()=>{
+    const quote=roofingQuote();
+    expect(evaluateSetAnswer(quote,'customer','ACME Holdings')).toEqual({ok:true,value:'ACME Holdings'});
+    expect(evaluateSetAnswer(quote,'roofWork','a full replacement')).toEqual({ok:true,value:'Replacement'});
+    expect(evaluateSetAnswer(quote,'roofArea','2,400 square feet')).toEqual({ok:true,value:'2400'});
+    expect(evaluateSetAnswer(quote,'roofArea','').ok).toBe(false);
+    expect(evaluateSetAnswer(quote,'waste','150').ok).toBe(false);
+    expect(evaluateSetAnswer(quote,'layers','4 layers').ok).toBe(false);
+    expect(evaluateSetAnswer(quote,'not-a-field','x').ok).toBe(false);
+    expect(evaluateSetAnswer(quote,'trades','Demolition').ok).toBe(false);
+  });
+  it('handles multi-select and unknown answers',()=>{
+    const quote=makeQuote('renovation',pricing);
+    expect(evaluateSetAnswerOptions(quote,'trades',['demolition','electrical work'])).toEqual({ok:true,value:['Demolition','Electrical']});
+    expect(evaluateSetAnswerOptions(quote,'trades',[]).ok).toBe(false);
+    expect(evaluateSetAnswerOptions(quote,'customer',['x']).ok).toBe(false);
+    const roofing=roofingQuote();
+    expect(evaluateMarkUnknown(roofing,'condition')).toEqual({ok:true,value:'Not sure yet'});
+    expect(evaluateMarkUnknown(roofing,'address').ok).toBe(false);
+    expect(evaluateMarkUnknown(roofing,'missing').ok).toBe(false);
+  });
+});
+
+describe('question flow',()=>{
+  it('walks required questions in order, respects conditional questions and knows when the guide is complete',()=>{
+    const quote=makeQuote('roofing',pricing);
+    expect(nextQuestion(quote)?.id).toBe('customer');
+    quote.answers.customer='ACME Holdings';
+    expect(nextQuestion(quote)?.id).toBe('address');
+    quote.answers.address='12 Elm St, Harrisburg, PA 17101';
+    quote.answers.title='Elm St roof';
+    quote.answers.roofWork='Replacement';
+    quote.answers.roofSystem='TPO / PVC membrane';
+    quote.answers.measurementMode='Building footprint + roof pitch';
+    expect(nextQuestion(quote)?.id).toBe('roofArea');
+    quote.answers.roofArea='2000';
+    expect(nextQuestion(quote)?.id).toBe('pitch');
+    quote.answers.pitch='4';
+    quote.answers.measurementSource='Field measured';
+    quote.answers.layers='1 layer';
+    quote.answers.condition='Aging membrane';
+    quote.answers.details='Two drains';
+    quote.answers.access='Driveway';
+    quote.answers.waste='10';
+    quote.answers.schedule='Within 60 days';
+    quote.answers.permits='Included in our scope';
+    expect(nextQuestion(quote)).toBeNull();
+    expect(questions('roofing',quote.answers).filter(q=>isMissing(q,quote.answers)).map(q=>q.id)).toEqual([]);
+  });
+  it('flags unknown answers for review instead of treating them as complete',()=>{
+    const quote=roofingQuote();
+    quote.answers.waste='Not sure yet';
+    expect(nextQuestion(quote)?.id).toBe('waste');
+  });
+});
+
+describe('voice approval gate',()=>{
+  it('reads back the customer, total, assumptions and flags before any save',()=>{
+    const quote=roofingQuote();
+    quote.lines=initialLines(quote);
+    quote.lines[0].material=2.2;quote.lines[0].hours=0;
+    for(const line of quote.lines.slice(1)){line.hours=40;line.material=0;line.rate=55;}
+    quote.assumptions='TPO 60mil over ISO.\nExisting deck assumed sound.';
+    const text=voiceReadBack(quote);
+    expect(text).toContain('ACME Holdings');
+    expect(text).toContain('12 Elm St');
+    expect(text).toContain(money(totals(quote.lines,quote.pricing).total));
+    expect(text).toContain('TPO 60mil');
+    expect(text).toContain('pending project');
+    expect(text).toContain('Do you confirm saving exactly this revision?');
+  });
+  it('blocks approval without a portal customer, acknowledgment or priced lines, and never for a broken revision',()=>{
+    const quote=roofingQuote();
+    quote.lines=initialLines(quote);
+    expect(approvalBlockers(quote)).toContain('No portal customer is selected. Choose the matching customer on screen.');
+    expect(approvalBlockers(quote)).toContain('Some cost lines still need quantities or pricing.');
+    quote.portal={clientId:'c1',customerName:'ACME'};
+    quote.acknowledged=true;
+    quote.lines[0].material=2.2;quote.lines[0].hours=0;
+    for(const line of quote.lines.slice(1)){line.hours=40;line.material=0;line.rate=55;}
+    expect(approvalBlockers(quote)).toEqual([]);
+    quote.approvedAt=new Date().toISOString();
+    expect(approvalBlockers(quote)).toContain('This revision is already approved.');
+  });
+  it('requires a confirmation tied to the exact read-back revision and rejects stale or edited confirmations',()=>{
+    const quote=roofingQuote();
+    quote.lines=initialLines(quote);
+    quote.lines[0].material=2.2;quote.lines[0].hours=0;
+    for(const line of quote.lines.slice(1)){line.hours=40;line.material=0;line.rate=55;}
+    quote.portal={clientId:'c1',customerName:'ACME'};
+    quote.acknowledged=true;
+    const prepared=prepareVoiceApproval(quote);
+    expect(confirmVoiceApproval(quote,null,prepared.fingerprint).ok).toBe(false);
+    expect(confirmVoiceApproval(quote,prepared,'different-fingerprint').ok).toBe(false);
+    expect(confirmVoiceApproval(quote,prepared,prepared.fingerprint).ok).toBe(true);
+    quote.lines[0].material=3.3;
+    expect(confirmVoiceApproval(quote,prepared,prepared.fingerprint).ok).toBe(false);
+  });
+  it('keeps the approval id stable across repeated confirmations so retries cannot duplicate projects',()=>{
+    const quote=roofingQuote();
+    quote.lines=initialLines(quote);
+    quote.lines[0].material=2.2;quote.lines[0].hours=0;
+    for(const line of quote.lines.slice(1)){line.hours=40;line.material=0;line.rate=55;}
+    quote.portal={clientId:'c1',customerName:'ACME'};
+    quote.acknowledged=true;
+    // The voice save flow records the prepared identity on the draft before the request, exactly like the on-screen approval button.
+    const first=prepareVoiceApproval(quote);
+    quote.portal={...quote.portal,approvalId:first.approvalId,fingerprint:first.fingerprint};
+    const second=prepareVoiceApproval(quote);
+    expect(second.approvalId).toBe(first.approvalId);
+    expect(confirmVoiceApproval(quote,first,first.fingerprint).ok).toBe(true);
+  });
+});
+
+describe('voice context',()=>{
+  it('guides a fresh session and never re-asks provided answers',()=>{
+    expect(buildVoiceContext({userName:'Mike',quote:null})).toContain('Signed-in user: Mike');
+    expect(buildVoiceContext({userName:'Mike',quote:null})).toContain('start_quote');
+    const quote=roofingQuote();
+    const context=buildVoiceContext({userName:'Mike',quote});
+    expect(context).toContain('do not ask for these again');
+    expect(context).toContain('All intake questions are answered');
+    quote.stage='review';
+    expect(buildVoiceContext({userName:'Mike',quote})).toContain('prepare_approval');
+  });
+});
+
+describe('voice controller',()=>{
+  type Sent={type:string;[k:string]:unknown};
+  const setup=(quote:Quote|null,overrides:Partial<Record<'startQuote'|'setAnswer'|'markUnknown'|'goBack'|'startEstimate'|'saveApproval',((...args:never[])=>unknown)>>={})=>{
+    const sent:Sent[]=[];
+    const actions={
+      getQuote:()=>quote,
+      getUserName:()=>'Mike',
+      startQuote:vi.fn(()=>(quote=makeQuote('roofing',pricing),'Quote draft created.')) as unknown as (type:JobType,address:string)=>string,
+      setAnswer:vi.fn(()=>'Answer recorded.'),
+      markUnknown:vi.fn(()=>'Marked as not sure.'),
+      goBack:vi.fn(()=>'Revisiting the earlier question.'),
+      startEstimate:vi.fn(()=>'Research started.'),
+      saveApproval:vi.fn(async()=>({saved:true,message:'Saved revision 1.'})),
+      ...overrides,
+    };
+    const controller=createVoiceController(actions as never,{onState:()=>{}},event=>sent.push(event as Sent));
+    const tool=(name:string,args:unknown)=>({type:'response.output_item.done',item:{type:'function_call',call_id:`c_${name}`,name,arguments:JSON.stringify(args)}});
+    const output=(name:string)=>{const matches=sent.filter(e=>e.type==='conversation.item.create'&&((e as {item?:{call_id?:string}}).item?.call_id===`c_${name}`));return JSON.stringify(matches[matches.length-1]||{});};
+    return {controller,sent,actions,tool,output};
+  };
+
+  it('greets, records a valid answer, pushes fresh context and asks the next question',async()=>{
+    let quote=roofingQuote();
+    const {controller,sent,actions,tool,output}=setup(quote);
+    controller.handleEvent({type:'session.created'});
+    expect(sent.filter(e=>e.type==='conversation.item.create').length).toBeGreaterThan(0);
+    expect(sent.some(e=>e.type==='response.create')).toBe(true);
+    controller.handleEvent(tool('set_answer',{field:'customer',value:'ACME Holdings'}));
+    await vi.waitFor(()=>expect(output('set_answer')).toContain('Answer recorded'));
+    expect(actions.setAnswer).toHaveBeenCalledWith('customer','ACME Holdings');
+  });
+  it('refuses invalid answers without mutating the draft',async()=>{
+    const {controller,actions,tool,output}=setup(roofingQuote());
+    controller.handleEvent(tool('set_answer',{field:'waste',value:'150'}));
+    await vi.waitFor(()=>expect(output('set_answer')).toContain('not a valid'));
+    expect(actions.setAnswer).not.toHaveBeenCalled();
+  });
+  it('creates a quote from voice and refuses a second one while one is open',async()=>{
+    const {controller,actions,tool,output}=setup(null);
+    controller.handleEvent(tool('start_quote',{type:'roofing',address:'12 Elm St, Harrisburg, PA'}));
+    await vi.waitFor(()=>expect(output('start_quote')).toContain('Quote draft created'));
+    expect(actions.startQuote).toHaveBeenCalledWith('roofing','12 Elm St, Harrisburg, PA');
+    controller.handleEvent(tool('start_quote',{type:'roofing',address:'elsewhere'}));
+    await vi.waitFor(()=>expect(output('start_quote')).toContain('already open'));
+  });
+  it('supports interruption: speech during a response switches to listening and drops the stale transcript',async()=>{
+    const {controller}=setup(roofingQuote());
+    controller.handleEvent({type:'session.created'});
+    controller.handleEvent({type:'response.created',response:{id:'r1'}});
+    controller.handleEvent({type:'response.output_audio_transcript.delta',delta:'So the roof is '});
+    controller.handleEvent({type:'input_audio_buffer.speech_started'});
+    controller.handleEvent({type:'response.output_audio_transcript.delta',delta:'2,400 square feet.'});
+    controller.handleEvent({type:'response.output_audio_transcript.done'});
+    const state=controller.state;
+    expect(state.phase).toBe('listening');
+    expect(state.transcript.filter(t=>t.role==='revive')).toEqual([]);
+  });
+  it('pause blocks every command except resume',async()=>{
+    const {controller,sent,tool,output}=setup(roofingQuote());
+    controller.handleEvent({type:'session.created'});
+    controller.handleEvent(tool('pause_session',{}));
+    await vi.waitFor(()=>expect(output('pause_session')).toContain('Paused'));
+    expect(controller.state.paused).toBe(true);
+    controller.handleEvent(tool('set_answer',{field:'customer',value:'ACME'}));
+    await vi.waitFor(()=>expect(output('set_answer')).toContain('paused'));
+    controller.handleEvent(tool('resume_session',{}));
+    await vi.waitFor(()=>expect(output('resume_session')).toContain('Resumed'));
+    expect(controller.state.paused).toBe(false);
+    expect(sent.some(e=>e.type==='response.create')).toBe(true);
+  });
+  it('refuses to start the estimate while intake is incomplete and starts it when complete',async()=>{
+    const partial=roofingQuote();
+    delete (partial.answers as Record<string,unknown>).schedule;
+    const {controller,actions,tool,output}=setup(partial);
+    controller.handleEvent(tool('start_estimate',{}));
+    await vi.waitFor(()=>expect(output('start_estimate')).toContain('incomplete'));
+    expect(actions.startEstimate).not.toHaveBeenCalled();
+    const {controller:c2,actions:a2,tool:t2,output:o2}=setup(roofingQuote());
+    c2.handleEvent(t2('start_estimate',{}));
+    await vi.waitFor(()=>expect(o2('start_estimate')).toContain('Research started'));
+    expect(a2.startEstimate).toHaveBeenCalled();
+  });
+  it('requires prepare_approval before confirm and rejects a fingerprint that does not match the read-back revision',async()=>{
+    const quote=roofingQuote();
+    quote.lines=initialLines(quote);
+    quote.lines[0].material=2.2;quote.lines[0].hours=0;
+    for(const line of quote.lines.slice(1)){line.hours=40;line.material=0;line.rate=55;}
+    quote.stage='review';
+    quote.portal={clientId:'c1',customerName:'ACME'};
+    quote.acknowledged=true;
+    const {controller,actions,tool,output}=setup(quote);
+    controller.handleEvent(tool('confirm_approval',{fingerprint:'never-read-back'}));
+    await vi.waitFor(()=>expect(output('confirm_approval')).toContain('No revision was read back'));
+    expect(actions.saveApproval).not.toHaveBeenCalled();
+    controller.handleEvent(tool('prepare_approval',{}));
+    await vi.waitFor(()=>expect(output('prepare_approval')).toContain('SUMMARY:'));
+    const prepared=controller.state.pendingApproval;
+    expect(prepared).toBeTruthy();
+    controller.handleEvent(tool('confirm_approval',{fingerprint:'wrong'}));
+    await vi.waitFor(()=>expect(output('confirm_approval')).toContain('does not match'));
+    expect(actions.saveApproval).not.toHaveBeenCalled();
+    controller.handleEvent(tool('confirm_approval',{fingerprint:prepared!.fingerprint}));
+    await vi.waitFor(()=>expect(output('confirm_approval')).toContain('Saved revision 1'));
+    expect(actions.saveApproval).toHaveBeenCalledWith(expect.objectContaining({id:quote.id}));
+  });
+  it('ends the session cleanly',async()=>{
+    const {controller,tool,output}=setup(roofingQuote());
+    controller.handleEvent(tool('end_session',{}));
+    await vi.waitFor(()=>expect(controller.state.phase).toBe('ended'));
+    expect(output('end_session')).toContain('Session ended');
+  });
+});
