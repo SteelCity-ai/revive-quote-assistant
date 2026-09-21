@@ -40,8 +40,10 @@ Deployment evidence is below. A server health check does not prove the user's ph
 
 1. Conversational voice: **Talk to Revive**, spoken questions, automatic end-of-turn detection, extracted/validated answers, corrections, spoken review and distinct confirmation. Nothing in the current UI implements voice yet; see the architecture acceptance notes.
 2. Google roof measurement: implemented (server `/api/roof/measure` via Geocoding + Solar APIs, `GOOGLE_SOLAR_API_KEY`; guide "Measure with Google" button prefills roof area with imagery date/quality provenance and a "Google aerial imagery" source option). Not yet verified with a real key — needs a real-key live check and staging verification before release.
-3. Cross-device draft storage and safe JSON import (existing exports are backups only).
-4. Actual device/Bluetooth/background/network testing; do not assume hands-free capability from a browser mock.
-5. Optional email/SMS delivery with recipient confirmation, audit history and retries.
-6. Shared session/rate-limit store before scaling beyond one app instance; organization/user-separated draft storage for shared devices.
-7. Reconcile newer live portal code and the separate safety-development checkout into the portal repository before the next portal deployment.
+3. Reconcile newer live portal code and the separate safety-development checkout into the portal repository before the next portal deployment.
+4. Cross-device draft storage and safe JSON import (existing exports are backups only).
+5. Actual device/Bluetooth/background/network testing; do not assume hands-free capability from a browser mock.
+6. Optional email/SMS delivery with recipient confirmation, audit history and retries.
+7. Shared session/rate-limit store before scaling beyond one app instance; organization/user-separated draft storage for shared devices.
+8. Quote accuracy tracking: specified in [ACCURACY-SPEC.md](ACCURACY-SPEC.md) (portal-owned actuals, manual entry on closed projects, MAPE/bias reporting once ~10 jobs close). Phase 1 (data collection) is the recommended starting point when the portal team has capacity.
+9. TypeSafe Jev decisions: evaluated and deliberately deferred (see ACCURACY-SPEC.md "Jev" section). Revisit only for the voice feature's answer validation; do not add it to the estimate flow.
