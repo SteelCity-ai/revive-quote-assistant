@@ -25,9 +25,17 @@ export default function Guide({ quote, update, exit, finish, connections }: { qu
     try {
       const result = await measureRoof(address, new AbortController().signal);
       if (!result.available || !result.roofAreaSqFt) { setMeasureNote(result.reason ?? 'No measurement was returned. Measure manually.'); return; }
-      const provenance = `Google aerial imagery${result.imageryDate ? ` (${result.imageryDate})` : ''}${result.imageryQuality ? `, quality ${result.imageryQuality}` : ''}`;
+      const provenance = `Google aerial imagery${result.imageryDate ? ` (${result.imageryDate})` : ''}${result.imageryQuality ? `, quality ${result.imageryQuality}` : ''}${result.coveragePercent != null ? `, coverage ${result.coveragePercent}% of ground footprint` : ''}`;
       update({ answers: { ...quote.answers, roofArea: String(result.roofAreaSqFt), measurementSource: 'Google aerial imagery', measurementProvenance: provenance } });
-      setMeasureNote(`Google measured ${result.roofAreaSqFt.toLocaleString()} sq ft of roof surface${result.imageryDate ? ` from ${result.imageryDate} imagery` : ''}. This is the sloped surface area — enter pitch separately only if you switch to footprint mode. Check it against the sections you are quoting and edit if needed.`);
+      const details = [
+        `Matched address: ${result.formattedAddress || address}.`,
+        `Measured sloped roof surface: ${result.roofAreaSqFt.toLocaleString()} sq ft (tilt already applied — do not enter pitch again).`,
+        result.footprintSqFt != null ? `Building ground footprint: ${result.footprintSqFt.toLocaleString()} sq ft.` : '',
+        result.coveredSqFt != null ? `Ground area Google actually covered: ${result.coveredSqFt.toLocaleString()} sq ft.` : '',
+        result.imageryDate ? `Imagery from ${result.imageryDate}, quality ${result.imageryQuality || 'unknown'}.` : '',
+        result.partial ? 'WARNING: Google may have measured only part of the building — verify every roof section you are quoting, and measure missing sections manually.' : 'Please confirm the correct building was matched and the measured roof covers the sections you are quoting.',
+      ].filter(Boolean).join(' ');
+      setMeasureNote(details + ' Edit the area if anything is missing or wrong.');
     } catch (e) { setMeasureNote(e instanceof Error ? e.message : 'The measurement could not be completed. Measure manually instead.'); }
     finally { setMeasuring(false); }
   };

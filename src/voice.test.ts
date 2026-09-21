@@ -157,17 +157,18 @@ describe('voice controller',()=>{
     const actions={
       getQuote:()=>quote,
       getUserName:()=>'Mike',
-      startQuote:vi.fn(()=>(quote=makeQuote('roofing',pricing),'Quote draft created.')) as unknown as (type:JobType,address:string)=>string,
-      setAnswer:vi.fn(()=>'Answer recorded.'),
-      markUnknown:vi.fn(()=>'Marked as not sure.'),
-      goBack:vi.fn(()=>'Revisiting the earlier question.'),
-      startEstimate:vi.fn(()=>'Research started.'),
-      saveApproval:vi.fn(async()=>({saved:true,message:'Saved revision 1.'})),
+      startQuote:vi.fn((type:JobType,address:string)=>{quote=makeQuote(type,pricing);quote.answers={address};return {message:'Quote draft created.',quote};}),
+      setAnswer:vi.fn(()=>({message:'Answer recorded.',quote})),
+      markUnknown:vi.fn(()=>({message:'Marked as not sure.',quote})),
+      goBack:vi.fn(()=>({message:'Revisiting the earlier question.',quote})),
+      startEstimate:vi.fn(()=>({message:'Research started.',quote})),
+      saveApproval:vi.fn(async()=>({saved:true,message:'Saved revision 1.',quote})),
       ...overrides,
     };
     const controller=createVoiceController(actions as never,{onState:()=>{}},event=>sent.push(event as Sent));
-    const tool=(name:string,args:unknown)=>({type:'response.output_item.done',item:{type:'function_call',call_id:`c_${name}`,name,arguments:JSON.stringify(args)}});
-    const output=(name:string)=>{const matches=sent.filter(e=>e.type==='conversation.item.create'&&((e as {item?:{call_id?:string}}).item?.call_id===`c_${name}`));return JSON.stringify(matches[matches.length-1]||{});};
+    const tool=(name:string,args:unknown)=>({type:'response.output_item.done',item:{type:'function_call',call_id:`${name}_${++toolCounter}`,name,arguments:JSON.stringify(args)}});
+    let toolCounter=0;
+    const output=(name:string)=>{const matches=sent.filter(e=>e.type==='conversation.item.create'&&((e as {item?:{call_id?:string}}).item?.call_id?.startsWith(`${name}_`)));return JSON.stringify(matches[matches.length-1]||{});};
     return {controller,sent,actions,tool,output};
   };
 
@@ -260,5 +261,70 @@ describe('voice controller',()=>{
     controller.handleEvent(tool('end_session',{}));
     await vi.waitFor(()=>expect(controller.state.phase).toBe('ended'));
     expect(output('end_session')).toContain('Session ended');
+  });
+
+
+  const itemDone=(call:{call_id:string;name:string;arguments:string})=>({type:'response.output_item.done',item:{type:'function_call',...call}});
+  const responseDoneWith=(call:{call_id:string;name:string;arguments:string})=>({type:'response.done',response:{id:'resp_1',output:[{type:'function_call',...call}]}});
+  const systemContexts=(sent:Sent[])=>sent.filter(e=>e.type==='conversation.item.create'&&((e as {item?:{type?:string}}).item?.type==='message')).map(e=>JSON.stringify(e)).filter(t=>t.includes('"role":"system"'));
+
+  it('executes a function call exactly once when both completion events deliver it',async()=>{
+    const {controller,actions}=setup(roofingQuote());
+    const call={call_id:'dup_1',name:'set_answer',arguments:JSON.stringify({field:'customer',value:'ACME Holdings'})};
+    controller.handleEvent({type:'response.created',response:{id:'resp_1'}});
+    controller.handleEvent(itemDone(call));
+    controller.handleEvent(responseDoneWith(call));
+    await vi.waitFor(()=>expect(actions.setAnswer).toHaveBeenCalledTimes(1));
+    await new Promise(r=>setTimeout(r,50));
+    expect(actions.setAnswer).toHaveBeenCalledTimes(1);
+  });
+  it('processes each protected voice command once across both events',async()=>{
+    const quote=roofingQuote();
+    quote.stage='review';quote.portal={clientId:'c1',customerName:'ACME'};quote.acknowledged=true;
+    const {controller,actions}=setup(quote);
+    controller.handleEvent({type:'response.created',response:{id:'r1'}});
+    const calls=[
+      {call_id:'a',name:'start_quote',arguments:JSON.stringify({type:'roofing',address:'x'})},
+      {call_id:'b',name:'set_answer',arguments:JSON.stringify({field:'customer',value:'ACME Holdings'})},
+      {call_id:'c',name:'start_estimate',arguments:JSON.stringify({})},
+      {call_id:'d',name:'prepare_approval',arguments:JSON.stringify({})},
+      {call_id:'e',name:'confirm_approval',arguments:JSON.stringify({fingerprint:'nope'})},
+    ];
+    controller.handleEvent({type:'response.done',response:{id:'r1',output:calls.map(c=>({type:'function_call',...c}))}});
+    for(const c of calls)controller.handleEvent(itemDone(c));
+    await vi.waitFor(()=>expect(actions.setAnswer).toHaveBeenCalledTimes(1));
+    expect(actions.saveApproval).not.toHaveBeenCalled();
+  });
+  it('keeps voice context synchronized with React state without repeating questions',async()=>{
+    const sent:Sent[]=[];
+    let quote:Quote|null=null;
+    const actions={
+      getQuote:()=>quote,
+      getUserName:()=>'Mike',
+      startQuote:(type:JobType,address:string)=>{quote=makeQuote(type,pricing);quote.answers={address};return {message:'Quote draft created.',quote};},
+      setAnswer:(field:string,value:string|string[])=>{if(!quote)return {message:'No quote.',quote:null};const answers={...quote.answers,[field]:value};quote={...quote,answers};return {message:'Answer recorded.',quote};},
+      markUnknown:(field:string)=>{if(!quote)return {message:'No quote.',quote:null};return {message:'Marked.',quote:{...quote,answers:{...quote.answers,[field]:'Not sure yet'}}};},
+      goBack:()=>({message:'Going back.',quote}),
+      startEstimate:()=>({message:'Research started.',quote}),
+      saveApproval:vi.fn(async()=>({saved:true,message:'Saved.',quote:null})),
+    };
+    const controller=createVoiceController(actions as never,{onState:()=>{}},event=>sent.push(event as Sent));
+    // 1. Roofing quote created by voice — the next context carries the address.
+    controller.handleEvent({type:'response.created',response:{id:'r1'}});
+    controller.handleEvent(itemDone({call_id:'q1',name:'start_quote',arguments:JSON.stringify({type:'roofing',address:'100 Test St, Pittsburgh, PA'})}));
+    await vi.waitFor(()=>expect(quote).toBeTruthy());
+    const firstContext=systemContexts(sent).join(' ');
+    expect(firstContext).toContain('100 Test St, Pittsburgh, PA');
+    // 2. An answer is recorded — the next context contains it and asks the next unanswered question.
+    const before=sent.length;
+    controller.handleEvent(itemDone({call_id:'q2',name:'set_answer',arguments:JSON.stringify({field:'customer',value:'ACME Holdings'})}));
+    await new Promise(r=>setTimeout(r,30));
+    const secondContext=systemContexts(sent).slice(-1)[0]||'';
+    expect(secondContext).toContain('ACME Holdings');
+    expect(secondContext).toContain('next question');
+    expect(before).toBeLessThan(sent.length);
+    // 3. The previous question is not re-asked.
+    const nextMatch=secondContext.match(/"title":"([^"]+)"/);
+    expect(nextMatch?.[1]).not.toBe('Who is this quote for?');
   });
 });

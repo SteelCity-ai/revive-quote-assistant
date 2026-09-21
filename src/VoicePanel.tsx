@@ -7,7 +7,7 @@ import type {PortalReceipt} from './portal';
 import {createVoiceController,isMissing,nextQuestion} from './voice';
 import type {VoicePhase,VoiceState} from './voice';
 
-type Props={quote:Quote|null;update:(patch:Partial<Quote>,approval?:boolean)=>void;research:(force?:boolean)=>void;busy:boolean;error:string;startVoiceQuote:(type:JobType,address:string)=>void};
+type Props={quote:Quote|null;update:(patch:Partial<Quote>,approval?:boolean)=>void;research:(force?:boolean)=>void;busy:boolean;error:string;startVoiceQuote:(type:JobType,address:string)=>Quote};
 type SessionInfo={clientSecret:string;model:string;webRtcUrl:string};
 
 const phaseLabel:Record<VoicePhase,string>={
@@ -35,47 +35,49 @@ export default function VoicePanel({quote,update,research,busy,error,startVoiceQ
   const send=useCallback((event:unknown)=>{const dc=refs.dc.current;if(dc&&dc.readyState==='open')dc.send(JSON.stringify(event));},[]);
   const startQuote=useCallback((type:JobType,address:string)=>{
     const existing=refs.quote.current;
-    if(existing)return 'A quote is already open.';
-    refs.startVoiceQuote.current(type,address);
-    return 'The quote draft is created and saved on this device. Continue with the intake questions.';
+    if(existing)return {message:'A quote is already open.',quote:existing};
+    const created=refs.startVoiceQuote.current(type,address);
+    return {message:'The quote draft is created and saved on this device. Continue with the intake questions.',quote:created};
   },[]);
   const applyAnswer=useCallback((field:string,value:string|string[])=>{
-    const current=refs.quote.current;if(!current)return 'No quote is open.';
+    const current=refs.quote.current;if(!current)return null;
     const answers={...current.answers,[field]:value};
     const list=questions(current.type,answers);
     const next=list.find(q=>isMissing(q,answers));
     const nextIndex=next?list.findIndex(q=>q.id===next.id):list.length-1;
+    const updated:Quote={...current,answers,step:Math.max(0,nextIndex)};
     refs.update.current({answers,step:Math.max(0,nextIndex)});
-    return `Recorded. ${next?`Next: ${next.title}`:'The intake is complete. Offer to build the researched estimate.'}`;
+    return {message:`Recorded. ${next?`Next: ${next.title}`:'The intake is complete. Offer to build the researched estimate.'}`,quote:updated};
   },[]);
-  const saveApproval=useCallback(async(current:Quote):Promise<{saved:boolean;message:string}>=>{
+  const saveApproval=useCallback(async(current:Quote):Promise<{saved:boolean;message:string;quote:Quote|null}>=>{
     const prepared=prepareApproval(current);
     const pending={...(current.portal||{clientId:'',customerName:''}),approvalId:prepared.approvalId,fingerprint:prepared.fingerprint,error:undefined,receipt:undefined};
     refs.update.current({portal:pending,acknowledged:true});
     try{
       const receipt=await portalRequest<PortalReceipt>('quotes',prepared.body);
       refs.update.current({portal:{...pending,receipt},approvedAt:receipt.approvedAt,acknowledged:true},true);
-      return {saved:true,message:`Saved to the portal as revision ${receipt.revision}. The estimate PDF is stored and a pending project was created. The customer has not been contacted; acceptance stays a separate portal step.`};
+      return {saved:true,message:`Saved to the portal as revision ${receipt.revision}. The estimate PDF is stored and a pending project was created. The customer has not been contacted; acceptance stays a separate portal step.`,quote:refs.quote.current};
     }catch(e){
       const message=(e as Error).message;
       refs.update.current({portal:{...pending,error:message}});
-      return {saved:false,message:`The portal save failed: ${message} The draft is unchanged. You can retry on screen or by voice.`};
+      return {saved:false,message:`The portal save failed: ${message} The draft is unchanged. You can retry on screen or by voice.`,quote:refs.quote.current};
     }
   },[]);
   const actions=useCallback(()=>({
     getQuote:()=>refs.quote.current,
     getUserName:()=>userName,
     startQuote,
-    setAnswer:(field:string,value:string|string[])=>applyAnswer(field,value),
-    markUnknown:(field:string)=>applyAnswer(field,'Not sure yet'),
+    setAnswer:(field:string,value:string|string[])=>applyAnswer(field,value)??{message:'No quote is open. Ask for the job type and address and use start_quote.',quote:refs.quote.current},
+    markUnknown:(field:string)=>applyAnswer(field,'Not sure yet')??{message:'No quote is open.',quote:refs.quote.current},
     goBack:(field:string)=>{
-      const current=refs.quote.current;if(!current)return 'No quote is open.';
+      const current=refs.quote.current;if(!current)return {message:'No quote is open.',quote:current};
       const list=questions(current.type,current.answers);
       const index=list.findIndex(q=>q.id===field);
+      const updated:Quote={...current,step:Math.max(0,index)};
       refs.update.current({step:Math.max(0,index)});
-      return `Going back to: ${list[index]?.title||field}`;
+      return {message:`Going back to: ${list[index]?.title||field}`,quote:updated};
     },
-    startEstimate:()=>{refs.research.current();return 'The researched estimate is being prepared. It usually takes about a minute. I will tell you when it is done.';},
+    startEstimate:()=>{refs.research.current();return {message:'The researched estimate is being prepared. It usually takes about a minute. I will tell you when it is done.',quote:refs.quote.current};},
     saveApproval,
   }),[userName,startQuote,applyAnswer,saveApproval]);
 

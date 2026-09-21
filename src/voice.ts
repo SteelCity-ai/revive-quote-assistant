@@ -150,12 +150,12 @@ export type ToolResult={ok:boolean;message:string};
 export type VoiceActions={
   getQuote():Quote|null;
   getUserName():string;
-  startQuote(type:JobType,address:string):string;
-  setAnswer(field:string,value:string|string[]):string;
-  markUnknown(field:string):string;
-  goBack(field:string):string;
-  startEstimate():string;
-  saveApproval(quote:Quote):Promise<{saved:boolean;message:string}>;
+  startQuote(type:JobType,address:string):{message:string;quote:Quote|null};
+  setAnswer(field:string,value:string|string[]):{message:string;quote:Quote|null};
+  markUnknown(field:string):{message:string;quote:Quote|null};
+  goBack(field:string):{message:string;quote:Quote|null};
+  startEstimate():{message:string;quote:Quote|null};
+  saveApproval(quote:Quote):Promise<{saved:boolean;message:string;quote:Quote|null}>;
 };
 export type TranscriptEntry={role:'revive'|'user'|'status';text:string};
 export type VoiceState={phase:VoicePhase;paused:boolean;transcript:TranscriptEntry[];pendingApproval:PreparedApproval|null;error:string};
@@ -167,48 +167,62 @@ export function createVoiceController(actions:VoiceActions,{onState}:{onState:(s
   let currentResponseId='';
   let interrupting=false;
   let assistantSpoken='';
+  // Realtime can deliver the same function call via response.output_item.done AND
+  // response.done; only the first delivery of a call_id is executed. The set is
+  // cleared on each new response so it cannot grow across a session.
+  let handledCallIds=new Set<string>();
+  // The quote as of the most recent applied tool call. Actions return the updated
+  // quote synchronously so the next context push never re-reads a stale ref.
+  let activeQuote:Quote|null=null;
   const emit=()=>onState(state);
   const update=(patch:Partial<VoiceState>)=>{state={...state,...patch};emit();};
   const note=(role:TranscriptEntry['role'],text:string)=>update({transcript:[...state.transcript.slice(-60),{role,text}]});
-  const pushContext=(instructions?:string)=>{
-    send({type:'conversation.item.create',item:{type:'message',role:'system',content:[{type:'input_text',text:buildVoiceContext({userName:actions.getUserName(),quote:actions.getQuote()})}]}});
+  const pushContext=(quoteOverride?:Quote|null,instructions?:string)=>{
+    const quote=quoteOverride===undefined?actions.getQuote():quoteOverride;
+    send({type:'conversation.item.create',item:{type:'message',role:'system',content:[{type:'input_text',text:buildVoiceContext({userName:actions.getUserName(),quote})}]}});
     send({type:'response.create',response:instructions?{instructions}:{context:null}});
   };
   const dispatchTool=async(call:{call_id:string;name:string;arguments:string}):Promise<ToolResult>=>{
     let args:Record<string,unknown>={};
     try{args=call.arguments?JSON.parse(call.arguments):{};}catch{return {ok:false,message:'The command was malformed and was ignored. Continue the conversation.'};}
     if(state.paused&&call.name!=='resume_session')return {ok:false,message:'The session is paused. Do not act; wait for the user to resume.'};
-    const quote=actions.getQuote();
-    const apply=(verdict:Verdict,message:(value:string|string[])=>string):ToolResult=>{
-      if(!verdict.ok||verdict.value===undefined)return {ok:false,message:verdict.error||'The answer could not be recorded. Ask again.'};
-      return {ok:true,message:message(verdict.value)};
-    };
+    const quote=actions.getQuote()??activeQuote;
     switch(call.name){
       case 'start_quote':{
         const type=args.type as JobType,address=typeof args.address==='string'?clean(args.address):'';
         if(!['roofing','renovation','contracting'].includes(type))return {ok:false,message:'Unknown job type. Ask roofing, commercial renovation, or general contracting.'};
         if(!address)return {ok:false,message:'No address was given. Ask where the work is.'};
         if(quote)return {ok:false,message:`A quote (${quote.id.slice(0,8)}) is already open. Continue it or end this quote first.`};
-        const message=actions.startQuote(type,address);
-        return {ok:true,message};
+        const applied=actions.startQuote(type,address);activeQuote=applied.quote;
+        return {ok:true,message:applied.message};
       }
       case 'set_answer':{
         if(!quote)return {ok:false,message:'No quote is open yet. Ask for the job type and address and use start_quote.'};
-        return apply(evaluateSetAnswer(quote,String(args.field||''),args.value),value=>actions.setAnswer(String(args.field),value as string));
+        const verdict=evaluateSetAnswer(quote,String(args.field||''),args.value);
+        if(!verdict.ok||verdict.value===undefined)return {ok:false,message:verdict.error||'The answer could not be recorded. Ask again.'};
+        const applied=actions.setAnswer(String(args.field),verdict.value as string);activeQuote=applied.quote;
+        return {ok:true,message:applied.message};
       }
       case 'set_answer_options':{
         if(!quote)return {ok:false,message:'No quote is open yet.'};
-        return apply(evaluateSetAnswerOptions(quote,String(args.field||''),args.values),value=>actions.setAnswer(String(args.field),value as string[]));
+        const verdict=evaluateSetAnswerOptions(quote,String(args.field||''),args.values);
+        if(!verdict.ok||verdict.value===undefined)return {ok:false,message:verdict.error||'The answer could not be recorded. Ask again.'};
+        const applied=actions.setAnswer(String(args.field),verdict.value as string[]);activeQuote=applied.quote;
+        return {ok:true,message:applied.message};
       }
       case 'mark_unknown':{
         if(!quote)return {ok:false,message:'No quote is open yet.'};
-        return apply(evaluateMarkUnknown(quote,String(args.field||'')),()=>actions.markUnknown(String(args.field)));
+        const verdict=evaluateMarkUnknown(quote,String(args.field||''));
+        if(!verdict.ok||verdict.value===undefined)return {ok:false,message:verdict.error||'The answer could not be recorded. Ask again.'};
+        const applied=actions.markUnknown(String(args.field));activeQuote=applied.quote;
+        return {ok:true,message:applied.message};
       }
       case 'go_back':{
         if(!quote)return {ok:false,message:'No quote is open yet.'};
         const field=String(args.field||'');
         if(!findQuestion(quote,field))return {ok:false,message:'That question is not part of this quote. Ask the current question again.'};
-        return {ok:true,message:actions.goBack(field)};
+        const applied=actions.goBack(field);activeQuote=applied.quote;
+        return {ok:true,message:applied.message};
       }
       case 'pause_session':update({paused:true,phase:'paused'});note('status','Paused.');return {ok:true,message:'Paused. The user can resume by voice or screen.'};
       case 'resume_session':update({paused:false,phase:'listening'});note('status','Resumed.');return {ok:true,message:'Resumed. Continue with the next question.'};
@@ -217,20 +231,22 @@ export function createVoiceController(actions:VoiceActions,{onState}:{onState:(s
         if(quote.stage!=='guide')return {ok:false,message:'The estimate is already built. Review it on screen or use prepare_approval.'};
         const missing=questions(quote.type,quote.answers).filter(q=>isMissing(q,quote.answers));
         if(missing.length)return {ok:false,message:`The intake is incomplete. Ask next: ${missing[0].title}`};
-        return {ok:true,message:actions.startEstimate()};
+        const applied=actions.startEstimate();activeQuote=applied.quote??quote;
+        return {ok:true,message:applied.message};
       }
       case 'prepare_approval':{
         if(!quote)return {ok:false,message:'No quote is open yet.'};
         if(quote.stage!=='review')return {ok:false,message:'The researched estimate is not ready. Finish the intake and start the estimate first.'};
         const prepared=prepareVoiceApproval(quote);
         update({pendingApproval:prepared});
-        return {ok:true,message:`Read the following summary aloud verbatim, then ask the user to explicitly confirm saving this exact revision. SUMMARY: ${prepared.readback} (revision fingerprint ${prepared.fingerprint})`};
+        return {ok:true,message:`Read the following summary aloud verbatim, then ask the user to explicitly confirm saving this exact revision. SUMMARY: ${prepared.readback}`};
       }
       case 'confirm_approval':{
         if(!quote)return {ok:false,message:'No quote is open yet.'};
         const gate=confirmVoiceApproval(quote,state.pendingApproval,String(args.fingerprint||''));
         if(!gate.ok)return {ok:false,message:`Not saved. ${gate.reason} Do not retry on your own; wait for the user.`};
         const result=await actions.saveApproval(quote);
+        activeQuote=result.quote??quote;
         update({pendingApproval:null});
         return {ok:result.saved,message:result.message};
       }
@@ -239,17 +255,22 @@ export function createVoiceController(actions:VoiceActions,{onState}:{onState:(s
     }
   };
   const finishTools=async(calls:{call_id:string;name:string;arguments:string}[])=>{
-    for(const call of calls){
+    const fresh=calls.filter(call=>{
+      if(handledCallIds.has(call.call_id))return false;
+      handledCallIds.add(call.call_id);
+      return true;
+    });
+    for(const call of fresh){
       note('status',`Command: ${call.name}`);
       const result=await dispatchTool(call);
       send(toolResult(call,result));
     }
-    if(state.phase!=='ended'&&state.phase!=='paused')pushContext();
+    if(state.phase!=='ended'&&state.phase!=='paused')pushContext(activeQuote??undefined);
   };
   const handleEvent=(event:Record<string,unknown>)=>{
     const type=String(event.type||'');
-    if(type==='session.created'){update({phase:'listening'});pushContext('Greet the user by name, then follow the app context. Keep it to one or two spoken sentences.');return;}
-    if(type==='response.created'){currentResponseId=String((event.response as {id?:string})?.id||'');interrupting=false;update({phase:state.paused?'paused':'speaking'});return;}
+    if(type==='session.created'){update({phase:'listening'});pushContext(undefined,'Greet the user by name, then follow the app context. Keep it to one or two spoken sentences.');return;}
+    if(type==='response.created'){currentResponseId=String((event.response as {id?:string})?.id||'');interrupting=false;handledCallIds.clear();update({phase:state.paused?'paused':'speaking'});return;}
     if(type==='input_audio_buffer.speech_started'){interrupting=currentResponseId!=='';update({phase:'listening'});return;}
     if(type==='input_audio_buffer.committed'){if(!state.paused)update({phase:'thinking'});return;}
     if(type==='conversation.item.input_audio_transcription.completed'){const transcript=typeof event.transcript==='string'?event.transcript:'';if(transcript.trim())note('user',transcript);return;}
@@ -287,9 +308,9 @@ export function createVoiceController(actions:VoiceActions,{onState}:{onState:(s
   const setPaused=(paused:boolean)=>{
     if(paused===state.paused)return;
     update({paused,phase:paused?'paused':'listening'});
-    if(!paused)pushContext('The user resumed the session. Continue with the next question from the app context.');
+    if(!paused)pushContext(undefined,'The user resumed the session. Continue with the next question from the app context.');
   };
-  const notify=(text:string)=>{if(state.phase==='ended')return;pushContext(`APP UPDATE: ${text} Respond briefly.`);};
+  const notify=(text:string)=>{if(state.phase==='ended')return;pushContext(undefined,`APP UPDATE: ${text} Respond briefly.`);};
   return {handleEvent,notify,setPaused,get state(){return state;}};
 }
 

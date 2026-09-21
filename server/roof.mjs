@@ -20,7 +20,7 @@ export function createRoofMeasurer({ fetcher = fetch, apiKey = '' } = {}) {
       }
       const { lat, lng } = geo.results[0].geometry.location;
       const formatted = clean(geo.results[0].formatted_address || '');
-      const solarUrl = new URL('https://solar.googleapis.com/v1/buildingInsights:findClosestBuilding');
+      const solarUrl = new URL('https://solar.googleapis.com/v1/buildingInsights:findClosest');
       solarUrl.searchParams.set('location.latitude', String(lat));
       solarUrl.searchParams.set('location.longitude', String(lng));
       solarUrl.searchParams.set('requiredQuality', 'MEDIUM');
@@ -29,16 +29,35 @@ export function createRoofMeasurer({ fetcher = fetch, apiKey = '' } = {}) {
       if (solarRes.status === 404) return { available: false, reason: 'No building was found for this address in Google imagery. Measure manually instead.' };
       if (!solarRes.ok) return { available: false, reason: 'Roof imagery for this address is unavailable right now. Measure manually instead.' };
       const solar = await solarRes.json();
+      // Verified response structure (2026-09-21, live API): solarPotential.wholeRoofStats.areaMeters2
+      // is the measured sloped roof area (tilt already applied — never apply pitch again);
+      // wholeRoofStats.groundAreaMeters2 is the ground area Google actually covered;
+      // buildingStats.groundAreaMeters2 is the building's ground footprint. Google may exclude
+      // portions of a building from wholeRoofStats, so coverage is reported explicitly and a
+      // partial area is never presented as the complete roof.
       const areaM2 = solar.solarPotential?.wholeRoofStats?.areaMeters2;
-      const footprintM2 = solar.buildingStats?.footprintAreaMeters2 ?? solar.solarPotential?.buildingFootprintAreaMeters2;
       const roofAreaSqFt = Number.isFinite(areaM2) && areaM2 > 0 ? Math.round(areaM2 * M2_TO_FT2) : null;
       if (!roofAreaSqFt) return { available: false, reason: 'Google imagery covers this address but could not measure the roof. Measure manually instead.' };
-      const imageryDate = solar.imageryDate ? `${solar.imageryDate.year}-${String(solar.imageryDate.month).padStart(2, '0')}` : null;
+      const footprintM2 = solar.solarPotential?.buildingStats?.groundAreaMeters2;
+      const coveredM2 = solar.solarPotential?.wholeRoofStats?.groundAreaMeters2;
+      const footprintSqFt = Number.isFinite(footprintM2) && footprintM2 > 0 ? Math.round(footprintM2 * M2_TO_FT2) : null;
+      const coveredSqFt = Number.isFinite(coveredM2) && coveredM2 > 0 ? Math.round(coveredM2 * M2_TO_FT2) : null;
+      let coveragePercent = null;
+      if (footprintSqFt && coveredSqFt) coveragePercent = Math.round((coveredSqFt / footprintSqFt) * 100);
+      const partial = coveragePercent !== null && coveragePercent < 95;
+      const imageryDate = solar.imageryDate ? `${solar.imageryDate.year}-${String(solar.imageryDate.month).padStart(2, '0')}${solar.imageryDate.day ? '-' + String(solar.imageryDate.day).padStart(2, '0') : ''}` : null;
+      const note = partial
+        ? `Google may have measured only part of the building (coverage ${coveragePercent}% of the ground footprint). Confirm the correct building was matched and that every roof section you are quoting is included — measure manually any sections that are missing.`
+        : 'Confirm the matched address is the correct building and that the measured roof covers the sections you are quoting.';
       return {
         available: true,
         formattedAddress: formatted,
         roofAreaSqFt,
-        footprintSqFt: Number.isFinite(footprintM2) && footprintM2 > 0 ? Math.round(footprintM2 * M2_TO_FT2) : null,
+        footprintSqFt,
+        coveredSqFt,
+        coveragePercent,
+        partial,
+        note,
         imageryDate,
         imageryQuality: clean(solar.imageryQuality || ''),
         latitude: Number.isFinite(lat) ? lat : null,
