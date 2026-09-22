@@ -71,7 +71,11 @@ export function evaluateMarkUnknown(quote:Quote,field:string):Verdict{
 }
 
 export function isMissing(question:Question,answers:Answers):boolean{
-  return !question.optional&&!validAnswer(question,answers[question.id])||answers[question.id]==='Not sure yet';
+  // 'Not sure yet' is a recorded answer (flagged for review), not a gap —
+  // otherwise the voice loop re-asks questions the user already answered
+  // with "I don't know".
+  if(answers[question.id]==='Not sure yet')return false;
+  return !question.optional&&!validAnswer(question,answers[question.id]);
 }
 export function nextQuestion(quote:Quote):Question|null{
   if(quote.stage!=='guide')return null;

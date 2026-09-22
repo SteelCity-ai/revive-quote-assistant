@@ -72,10 +72,14 @@ describe('question flow',()=>{
     expect(nextQuestion(quote)).toBeNull();
     expect(questions('roofing',quote.answers).filter(q=>isMissing(q,quote.answers)).map(q=>q.id)).toEqual([]);
   });
-  it('flags unknown answers for review instead of treating them as complete',()=>{
+  it('records unknown answers as flagged-for-review without blocking the flow',()=>{
     const quote=roofingQuote();
     quote.answers.waste='Not sure yet';
-    expect(nextQuestion(quote)?.id).toBe('waste');
+    // Recorded "I don't know" is an answer, not a gap: the flow moves on…
+    expect(nextQuestion(quote)).toBeNull();
+    expect(questions('roofing',quote.answers).filter(q=>isMissing(q,quote.answers)).map(q=>q.id)).toEqual([]);
+    // …but the flag still surfaces in the read-back for review before approval.
+    expect(voiceReadBack(quote)).toContain('Flagged for review');
   });
 });
 
@@ -297,6 +301,18 @@ describe('voice controller',()=>{
     controller.handleEvent(tool('end_session',{}));
     await vi.waitFor(()=>expect(controller.state.phase).toBe('ended'));
     expect(output('end_session')).toContain('Session ended');
+  });
+  it('moves on after I-dont-know instead of re-asking the flagged question',()=>{
+    const quote=roofingQuote();
+    delete quote.answers.details; // "What roof details need attention?" allows unknown
+    const verdict=evaluateMarkUnknown(quote,'details');
+    expect(verdict).toEqual({ok:true,value:'Not sure yet'});
+    const after={...quote,answers:{...quote.answers,details:'Not sure yet'}};
+    // The recorded unknown is no longer reported as the next question to ask.
+    expect(nextQuestion(after)?.id).not.toBe('details');
+    // And a fully unknown-flagged intake does not block estimate generation.
+    const flagged:Quote={...after,answers:{...after.answers,condition:'Not sure yet',access:'Not sure yet'}};
+    expect(nextQuestion(flagged)?.id).not.toBe('details');
   });
 
 
