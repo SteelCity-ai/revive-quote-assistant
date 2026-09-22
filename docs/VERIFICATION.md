@@ -44,3 +44,30 @@ Artifacts are in `C:\Users\mike\.codex\workspaces\revive-quote-assistant\artifac
 The app is running locally on port 4178. It is not publicly deployed. The same-network phone address is `http://192.168.40.99:4178`; physical phone/firewall access remains unverified. Device/browser storage is the current persistence layer. Connected AI, price research, portal sync, automatic roof measurements, voice, attachments and messaging remain future implementation work, explicitly described in the app.
 
 The canonical portal working tree remained clean. No portal service, database or production configuration changed. No Git commit or push was made for the new app.
+
+---
+
+# Production UAT phase — started 2026-09-22
+
+## Baseline verification (all checked 2026-09-22, before any UAT change)
+
+- GitHub main at `0f75158`, clean, CI green on `9574fe7` and `0f75158` (runs 35662931786, 35671728557).
+- Public `https://quote.reviverepairco.com/healthz` → `{"status":"ok","version":"9574fe7bc9d437040275f126de61e3c4120df7bc"}`.
+- Public `/api/app/config` → `requiresLogin:true, voiceAvailable:true, roofMeasurementAvailable:true`.
+- Container `revive-quote-assistant` healthy on the running image `revive-quote-assistant:9574fe7…`.
+- Rollback images retained on the VPS: `9574fe7…` and `0150562d…` (first production release).
+- Real-key Solar check (from staging, 2026-09-21): geocoding + Solar both reachable through the app module; Empire State control measurement returned sloped area 55,771 sq ft, footprint 82,624 sq ft, covered 52,689 sq ft, coverage 64% → partial-coverage warning fired, imagery 2024-05-24 HIGH.
+
+## UAT progress tracker
+
+| # | Area | Status | Evidence |
+|---|------|--------|----------|
+| 1 | Real-device voice (iPhone Safari, Android Chrome, BT, Wi-Fi/cellular) | pending user tests | — |
+| 2 | Roof measurement vs trusted measurements (3 buildings) | awaiting trusted areas | — |
+| 3 | Quote type: roofing (full flow incl. portal save) | pending user test | — |
+| 4 | Quote type: renovation | pending user test | — |
+| 5 | Quote type: contracting | pending user test | — |
+| 6 | Estimate accuracy baseline (3 historical jobs) | awaiting approved historical data | — |
+| 7 | Defects found/fixed during UAT | none yet | — |
+
+Rules in force during UAT: synthetic/internal test customers only; no customer acceptance evidence; no portal redeploy; Google-derived data kept minimal (no imagery or raw API payloads in PDFs); every reproducible defect gets a regression test + smallest-component fix + full suite + staging before any production deploy.
