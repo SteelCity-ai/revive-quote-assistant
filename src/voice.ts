@@ -154,6 +154,7 @@ export type VoiceActions={
   setAnswer(field:string,value:string|string[]):{message:string;quote:Quote|null};
   markUnknown(field:string):{message:string;quote:Quote|null};
   goBack(field:string):{message:string;quote:Quote|null};
+  measureRoof(address:string):Promise<{message:string;quote:Quote|null}>;
   startEstimate():{message:string;quote:Quote|null};
   saveApproval(quote:Quote):Promise<{saved:boolean;message:string;quote:Quote|null}>;
 };
@@ -182,6 +183,19 @@ export function createVoiceController(actions:VoiceActions,{onState}:{onState:(s
     send({type:'conversation.item.create',item:{type:'message',role:'system',content:[{type:'input_text',text:buildVoiceContext({userName:actions.getUserName(),quote})}]}});
     send({type:'response.create',response:instructions?{instructions}:{context:null}});
   };
+  // Answers recorded since the last spoken recap. After every fourth, the tool
+  // result tells Revive to recap them and confirm before continuing.
+  let sinceRecap:{field:string;value:string|string[]}[]=[];
+  const recapSuffix=():string=>{
+    if(sinceRecap.length<4)return '';
+    const listed=sinceRecap.slice(-4).map(e=>{
+      const title=findQuestion((actions.getQuote()||activeQuote)!,e.field)?.title||e.field;
+      const value=Array.isArray(e.value)?e.value.join(' and '):e.value;
+      return `${title}: ${value}`;
+    }).join('; ');
+    sinceRecap=[];
+    return ` RECAP-DUE: In one sentence, confirm these four answers with the user before the next question — ${listed}.`;
+  };
   const dispatchTool=async(call:{call_id:string;name:string;arguments:string}):Promise<ToolResult>=>{
     let args:Record<string,unknown>={};
     try{args=call.arguments?JSON.parse(call.arguments):{};}catch{return {ok:false,message:'The command was malformed and was ignored. Continue the conversation.'};}
@@ -200,22 +214,36 @@ export function createVoiceController(actions:VoiceActions,{onState}:{onState:(s
         if(!quote)return {ok:false,message:'No quote is open yet. Ask for the job type and address and use start_quote.'};
         const verdict=evaluateSetAnswer(quote,String(args.field||''),args.value);
         if(!verdict.ok||verdict.value===undefined)return {ok:false,message:verdict.error||'The answer could not be recorded. Ask again.'};
-        const applied=actions.setAnswer(String(args.field),verdict.value as string);activeQuote=applied.quote;
-        return {ok:true,message:applied.message};
+        const applied=actions.setAnswer(String(args.field),verdict.value as string);activeQuote=applied.quote??quote;
+        sinceRecap.push({field:String(args.field),value:verdict.value as string});
+        return {ok:true,message:applied.message+recapSuffix()};
       }
       case 'set_answer_options':{
         if(!quote)return {ok:false,message:'No quote is open yet.'};
         const verdict=evaluateSetAnswerOptions(quote,String(args.field||''),args.values);
         if(!verdict.ok||verdict.value===undefined)return {ok:false,message:verdict.error||'The answer could not be recorded. Ask again.'};
-        const applied=actions.setAnswer(String(args.field),verdict.value as string[]);activeQuote=applied.quote;
-        return {ok:true,message:applied.message};
+        const applied=actions.setAnswer(String(args.field),verdict.value as string[]);activeQuote=applied.quote??quote;
+        sinceRecap.push({field:String(args.field),value:verdict.value as string[]});
+        return {ok:true,message:applied.message+recapSuffix()};
       }
       case 'mark_unknown':{
         if(!quote)return {ok:false,message:'No quote is open yet.'};
         const verdict=evaluateMarkUnknown(quote,String(args.field||''));
         if(!verdict.ok||verdict.value===undefined)return {ok:false,message:verdict.error||'The answer could not be recorded. Ask again.'};
-        const applied=actions.markUnknown(String(args.field));activeQuote=applied.quote;
-        return {ok:true,message:applied.message};
+        const applied=actions.markUnknown(String(args.field));activeQuote=applied.quote??quote;
+        sinceRecap.push({field:String(args.field),value:verdict.value as string});
+        return {ok:true,message:applied.message+recapSuffix()};
+      }
+      case 'measure_roof':{
+        if(!quote)return {ok:false,message:'No quote is open yet. Ask for the job type and address and use start_quote.'};
+        if(quote.type!=='roofing')return {ok:false,message:'Google roof measurement is only available for roofing quotes.'};
+        const requested=typeof args.address==='string'?clean(args.address):'';
+        const target=requested||clean(answerText(quote.answers,'address'));
+        if(!target)return {ok:false,message:'No address was given. Ask where the work is, then measure.'};
+        if(answerText(quote.answers,'roofArea'))return {ok:true,message:`A roof area of ${answerText(quote.answers,'roofArea')} sq ft is already recorded. Ask the user whether to keep it or measure again with Google.`};
+        const measured=await actions.measureRoof(target);
+        activeQuote=measured.quote??quote;
+        return {ok:true,message:measured.message};
       }
       case 'go_back':{
         if(!quote)return {ok:false,message:'No quote is open yet.'};

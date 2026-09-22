@@ -49,6 +49,21 @@ export default function VoicePanel({quote,update,research,busy,error,startVoiceQ
     refs.update.current({answers,step:Math.max(0,nextIndex)});
     return {message:`Recorded. ${next?`Next: ${next.title}`:'The intake is complete. Offer to build the researched estimate.'}`,quote:updated};
   },[]);
+  const measureRoof=useCallback(async(address:string):Promise<{message:string;quote:Quote|null}>=>{
+    let data:{available?:boolean;reason?:string;error?:string;roofAreaSqFt?:number;formattedAddress?:string;imageryDate?:string|null;imageryQuality?:string;coveragePercent?:number|null;note?:string};
+    try{
+      const response=await fetch('/api/roof/measure',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address})});
+      data=await response.json().catch(()=>({}));
+      if(!response.ok||!data.available)return {message:`The Google measurement did not work: ${data.reason||data.error||'not available for this address'}. Ask the user for their own measurement instead.`,quote:refs.quote.current};
+    }catch{return {message:'The Google measurement service is unreachable. Ask the user for their own measurement instead.',quote:refs.quote.current};}
+    const current=refs.quote.current;if(!current)return {message:'No quote is open.',quote:null};
+    const provenance=`Google aerial imagery${data.imageryDate?` (${data.imageryDate})`:''}${data.imageryQuality?`, quality ${data.imageryQuality}`:''}${data.coveragePercent!=null?`, coverage ${data.coveragePercent}% of ground footprint`:''}`;
+    const answers={...current.answers,roofArea:String(data.roofAreaSqFt),measurementSource:'Google aerial imagery',measurementProvenance:provenance};
+    const updated:Quote={...current,answers};
+    refs.update.current({answers});
+    const message=`Google measured ${Number(data.roofAreaSqFt).toLocaleString()} sq ft of sloped roof surface at ${data.formattedAddress||address}, from ${data.imageryDate||'unknown date'} imagery at ${data.imageryQuality||'unknown'} quality. ${data.note||''} Confirm the building and coverage with the user, then record or edit the roof area.`;
+    return {message,quote:updated};
+  },[]);
   const saveApproval=useCallback(async(current:Quote):Promise<{saved:boolean;message:string;quote:Quote|null}>=>{
     const prepared=prepareApproval(current);
     const pending={...(current.portal||{clientId:'',customerName:''}),approvalId:prepared.approvalId,fingerprint:prepared.fingerprint,error:undefined,receipt:undefined};
@@ -78,8 +93,9 @@ export default function VoicePanel({quote,update,research,busy,error,startVoiceQ
       return {message:`Going back to: ${list[index]?.title||field}`,quote:updated};
     },
     startEstimate:()=>{refs.research.current();return {message:'The researched estimate is being prepared. It usually takes about a minute. I will tell you when it is done.',quote:refs.quote.current};},
+    measureRoof,
     saveApproval,
-  }),[userName,startQuote,applyAnswer,saveApproval]);
+  }),[userName,startQuote,applyAnswer,saveApproval,measureRoof]);
 
   const stop=useCallback((phase:VoicePhase)=>{
     refs.pc.current?.close();refs.pc.current=null;refs.dc.current=null;

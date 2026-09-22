@@ -13,7 +13,7 @@ describe('realtime session config',()=>{
     expect(config.session.instructions).toContain('APP CONTEXT:');
     expect(config.session.instructions).toContain('never invent prices');
     const names=new Set(voiceTools.map(t=>t.name));
-    expect([...names].sort()).toEqual(['confirm_approval','end_session','go_back','mark_unknown','pause_session','prepare_approval','resume_session','set_answer','set_answer_options','start_estimate','start_quote']);
+    expect([...names].sort()).toEqual(['confirm_approval','end_session','go_back','mark_unknown','measure_roof','pause_session','prepare_approval','resume_session','set_answer','set_answer_options','start_estimate','start_quote']);
     for(const tool of voiceTools){
       expect(tool.type).toBe('function');
       expect(tool.parameters.type).toBe('object');

@@ -162,6 +162,7 @@ describe('voice controller',()=>{
       markUnknown:vi.fn(()=>({message:'Marked as not sure.',quote})),
       goBack:vi.fn(()=>({message:'Revisiting the earlier question.',quote})),
       startEstimate:vi.fn(()=>({message:'Research started.',quote})),
+      measureRoof:vi.fn(async()=>({message:'Google measured 2,400 sq ft of roof at the address. Confirm the building with the user.',quote})),
       saveApproval:vi.fn(async()=>({saved:true,message:'Saved revision 1.',quote})),
       ...overrides,
     };
@@ -255,6 +256,41 @@ describe('voice controller',()=>{
     controller.handleEvent(tool('confirm_approval',{fingerprint:prepared!.fingerprint}));
     await vi.waitFor(()=>expect(output('confirm_approval')).toContain('Saved revision 1'));
     expect(actions.saveApproval).toHaveBeenCalledWith(expect.objectContaining({id:quote.id}));
+  });
+  it('recaps after every fourth recorded answer instead of confirming each one',async()=>{
+    const {controller,tool,output}=setup(roofingQuote());
+    controller.handleEvent({type:'response.created',response:{id:'r1'}});
+    controller.handleEvent(tool('set_answer',{field:'title',value:'ACME roof'}));
+    await vi.waitFor(()=>expect(output('set_answer')).toContain('recorded'));
+    controller.handleEvent(tool('set_answer',{field:'roofWork',value:'Replacement'}));
+    controller.handleEvent(tool('set_answer',{field:'measurementMode',value:'Measured roof surface area'}));
+    const before=JSON.parse(output('set_answer'));
+    expect(before.item.output).not.toContain('RECAP-DUE'); // three answers: no recap yet
+    controller.handleEvent(tool('set_answer',{field:'layers',value:'1 layer'}));
+    await vi.waitFor(()=>{
+      const after=JSON.parse(output('set_answer'));
+      expect(after.item.output).toContain('RECAP-DUE');
+      expect(after.item.output).toContain('How many layers need to come off?');
+    });
+    const after=JSON.parse(output('set_answer'));
+    expect(after.item.output).toContain('ACME roof');
+    expect(after.item.output).toContain('1 layer');
+  });
+  it('offers a Google measurement through the measure_roof tool and refuses it for non-roofing quotes',async()=>{
+    const roofing=roofingQuote();
+    delete roofing.answers.roofArea;
+    const {controller:roofController,actions:roofActions,output:o1}=setup(roofing);
+    roofController.handleEvent({type:'response.created',response:{id:'r1'}});
+    roofController.handleEvent(itemDone({call_id:'measure_roof_m1',name:'measure_roof',arguments:JSON.stringify({})}));
+    await vi.waitFor(()=>expect(o1('measure_roof')).toContain('Google measured'));
+    expect(roofActions.measureRoof).toHaveBeenCalledWith(expect.stringContaining('12 Elm'));
+    const renovation=roofingQuote();
+    renovation.type='renovation';
+    delete renovation.answers.roofArea;
+    const {controller:renController,output:ro}=setup(renovation);
+    renController.handleEvent({type:'response.created',response:{id:'r2'}});
+    renController.handleEvent(itemDone({call_id:'measure_roof_m2',name:'measure_roof',arguments:JSON.stringify({})}));
+    await vi.waitFor(()=>expect(ro('measure_roof')).toContain('only available for roofing'));
   });
   it('ends the session cleanly',async()=>{
     const {controller,tool,output}=setup(roofingQuote());
