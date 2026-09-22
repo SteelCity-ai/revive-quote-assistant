@@ -1,5 +1,7 @@
 # Base app verification
 
+> Historical local-build record. The current production release and verification boundaries are maintained in [HANDOFF.md](HANDOFF.md). As of 2026-09-21, release `9574fe7bc9d437040275f126de61e3c4120df7bc` is publicly deployed with portal integration, Google roof measurement and conversational voice enabled. Statements below that the app is local-only or these integrations are future work describe the earlier checkpoint and are superseded.
+
 ## AI integration verification — September 5, 2026
 
 This addendum supersedes the earlier base-app statement that AI and price research were unimplemented.
