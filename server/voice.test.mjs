@@ -8,12 +8,13 @@ describe('realtime session config',()=>{
     const config=buildSessionConfig({model:'gpt-realtime-test',voice:'marin',context:'Signed-in user: QA.'});
     expect(config.session.type).toBe('realtime');
     expect(config.session.model).toBe('gpt-realtime-test');
-    expect(config.session.audio.input.turn_detection).toMatchObject({type:'semantic_vad',interrupt_response:true,create_response:true});
+    expect(config.session.audio.input.turn_detection).toMatchObject({type:'semantic_vad',eagerness:'medium',interrupt_response:true,create_response:true});
+    expect(config.session.audio.input.transcription).toEqual({model:'gpt-4o-mini-transcribe',language:'en'});
     expect(config.session.audio.output.voice).toBe('marin');
     expect(config.session.instructions).toContain('APP CONTEXT:');
     expect(config.session.instructions).toContain('never invent prices');
     const names=new Set(voiceTools.map(t=>t.name));
-    expect([...names].sort()).toEqual(['confirm_approval','end_session','go_back','mark_unknown','measure_roof','pause_session','prepare_approval','resume_session','set_answer','set_answer_options','start_estimate','start_quote']);
+    expect([...names].sort()).toEqual(['confirm_approval','confirm_recap','confirm_roof_measurement','correct_recap','discard_roof_measurement','end_session','go_back','mark_unknown','measure_roof','pause_session','prepare_approval','resume_session','set_answer','set_answer_options','start_estimate','start_quote']);
     for(const tool of voiceTools){
       expect(tool.type).toBe('function');
       expect(tool.parameters.type).toBe('object');
@@ -45,7 +46,8 @@ describe('voice session route',()=>{
     const open=await openServer({NODE_ENV:'development'},null);
     try{
       const config=await (await fetch(open.base+'/api/app/config')).json();
-      expect(config.voiceAvailable).toBe(false);
+    expect(config.voiceAvailable).toBe(false);
+    expect(config.jevAvailable).toBe(false);
       const devOrigin={'Origin':'http://localhost:4178'};
       expect((await fetch(open.base+'/api/voice/session',{method:'POST',headers:{...devOrigin,'Content-Type':'text/plain'},body:'x'})).status).toBe(415);
       expect((await fetch(open.base+'/api/voice/session',{method:'POST',headers:{...devOrigin,'Content-Type':'application/json'},body:'{}'})).status).toBe(503);

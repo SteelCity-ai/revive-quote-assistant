@@ -55,4 +55,4 @@ Deployment evidence is below. A server health check does not prove the user's ph
 6. Optional email/SMS delivery with recipient confirmation, audit history and retries.
 7. Shared session/rate-limit store before scaling beyond one app instance; organization/user-separated draft storage for shared devices.
 8. Quote accuracy tracking: specified in [ACCURACY-SPEC.md](ACCURACY-SPEC.md) (portal-owned actuals, manual entry on closed projects, MAPE/bias reporting once ~10 jobs close). Phase 1 (data collection) is the recommended starting point when the portal team has capacity.
-9. TypeSafe Jev decisions: evaluated and deliberately deferred (see ACCURACY-SPEC.md "Jev" section). Revisit only for the voice feature's answer validation; do not add it to the estimate flow.
+9. TypeSafe Jev is implemented only for optional voice intent/confidence routing and pause recovery. It is excluded from the estimate flow and every consequential action. Production needs a server-only `TYPESAFE_API_KEY` before `/api/app/config` will report `jevAvailable:true`; voice continues without it.

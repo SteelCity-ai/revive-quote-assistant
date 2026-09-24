@@ -1,6 +1,6 @@
 # Base app verification
 
-> Historical local-build record. The current production release and verification boundaries are maintained in [HANDOFF.md](HANDOFF.md). As of 2026-09-21, release `9574fe7bc9d437040275f126de61e3c4120df7bc` is publicly deployed with portal integration, Google roof measurement and conversational voice enabled. Statements below that the app is local-only or these integrations are future work describe the earlier checkpoint and are superseded.
+> Historical local-build record. The current production release and verification boundaries are maintained in [HANDOFF.md](HANDOFF.md). As of the pre-release check on 2026-09-23, production reports `17ae78192b6ea39f8d28a1dea71466c3ff672b69` with portal integration, Google roof measurement and conversational voice enabled. Statements below that the app is local-only or these integrations are future work describe earlier checkpoints and are superseded.
 
 ## AI integration verification — September 5, 2026
 
@@ -62,12 +62,12 @@ The canonical portal working tree remained clean. No portal service, database or
 
 | # | Area | Status | Evidence |
 |---|------|--------|----------|
-| 1 | Real-device voice (iPhone Safari, Android Chrome, BT, Wi-Fi/cellular) | pending user tests | — |
+| 1 | Real-device voice (iPhone Safari, Android Chrome, BT, Wi-Fi/cellular) | basic Android/iPhone voice reported working; pause-recovery retest pending | Owner test 2026-09-23; intermittent post-answer stall reproduced by report |
 | 2 | Roof measurement vs trusted measurements (3 buildings) | awaiting trusted areas | — |
 | 3 | Quote type: roofing (full flow incl. portal save) | pending user test | — |
 | 4 | Quote type: renovation | pending user test | — |
 | 5 | Quote type: contracting | pending user test | — |
 | 6 | Estimate accuracy baseline (3 historical jobs) | awaiting approved historical data | — |
-| 7 | Defects found/fixed during UAT | none yet | — |
+| 7 | Defects found/fixed during UAT | fixed locally; release verification pending | session-level call-ID dedupe, pending Google confirmation, deterministic recap gate, medium VAD + one-shot watchdog, optional Jev routing |
 
 Rules in force during UAT: synthetic/internal test customers only; no customer acceptance evidence; no portal redeploy; Google-derived data kept minimal (no imagery or raw API payloads in PDFs); every reproducible defect gets a regression test + smallest-component fix + full suite + staging before any production deploy.

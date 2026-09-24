@@ -151,6 +151,14 @@ export function buildVoiceContext({userName,quote}:VoiceContextInput):string{
 }
 
 export type ToolResult={ok:boolean;message:string};
+export type VoiceDecision={intent:string;confidence:number;reliable:boolean};
+export type RecapItem={field:string;value:string|string[]};
+export type PendingRoofMeasurement={roofAreaSqFt:number;formattedAddress:string;imageryDate:string|null;imageryQuality:string;coveragePercent:number|null;note:string;provenance:string};
+export function applyConfirmedRoofMeasurement(quote:Quote,pending:PendingRoofMeasurement):Quote{
+  const answers:Answers={...quote.answers,measurementMode:'Measured roof surface area',roofArea:String(pending.roofAreaSqFt),measurementSource:'Google aerial imagery',measurementProvenance:pending.provenance};
+  delete answers.pitch;
+  return {...quote,answers};
+}
 export type VoiceActions={
   getQuote():Quote|null;
   getUserName():string;
@@ -159,29 +167,43 @@ export type VoiceActions={
   markUnknown(field:string):{message:string;quote:Quote|null};
   goBack(field:string):{message:string;quote:Quote|null};
   measureRoof(address:string):Promise<{message:string;quote:Quote|null}>;
+  confirmRoofMeasurement():{ok:boolean;message:string;quote:Quote|null};
+  discardRoofMeasurement():{ok:boolean;message:string;quote:Quote|null};
+  classifyVoiceTurn?(transcript:string):Promise<VoiceDecision|null>;
   startEstimate():{message:string;quote:Quote|null};
   saveApproval(quote:Quote):Promise<{saved:boolean;message:string;quote:Quote|null}>;
 };
 export type TranscriptEntry={role:'revive'|'user'|'status';text:string};
-export type VoiceState={phase:VoicePhase;paused:boolean;transcript:TranscriptEntry[];pendingApproval:PreparedApproval|null;error:string};
+export type VoiceState={phase:VoicePhase;paused:boolean;transcript:TranscriptEntry[];pendingApproval:PreparedApproval|null;recapPending:RecapItem[]|null;error:string};
 
 const toolResult=(call:{call_id:string;name:string},result:ToolResult)=>({type:'conversation.item.create',item:{type:'function_call_output',call_id:call.call_id,output:JSON.stringify(result)}});
 
 export function createVoiceController(actions:VoiceActions,{onState}:{onState:(state:VoiceState)=>void},send:(event:unknown)=>void){
-  let state:VoiceState={phase:'connecting',paused:false,transcript:[],pendingApproval:null,error:''};
+  let state:VoiceState={phase:'connecting',paused:false,transcript:[],pendingApproval:null,recapPending:null,error:''};
   let currentResponseId='';
   let interrupting=false;
   let assistantSpoken='';
+  let responseWatchdog:ReturnType<typeof setTimeout>|null=null;
+  let committedTurn=0;
+  let latestDecision:{turn:number;decision:VoiceDecision|null}|null=null;
   // Realtime can deliver the same function call via response.output_item.done AND
   // response.done; only the first delivery of a call_id is executed. The set is
-  // cleared on each new response so it cannot grow across a session.
-  let handledCallIds=new Set<string>();
+  // Kept across the session because response.done can arrive after a newer
+  // response.created. A bounded insertion-ordered Set prevents unbounded growth.
+  const handledCallIds=new Set<string>();
   // The quote as of the most recent applied tool call. Actions return the updated
   // quote synchronously so the next context push never re-reads a stale ref.
   let activeQuote:Quote|null=null;
   const emit=()=>onState(state);
   const update=(patch:Partial<VoiceState>)=>{state={...state,...patch};emit();};
   const note=(role:TranscriptEntry['role'],text:string)=>update({transcript:[...state.transcript.slice(-60),{role,text}]});
+  const clearWatchdog=()=>{if(responseWatchdog){clearTimeout(responseWatchdog);responseWatchdog=null;}};
+  const rememberCall=(callId:string)=>{
+    if(handledCallIds.has(callId))return false;
+    handledCallIds.add(callId);
+    if(handledCallIds.size>256)handledCallIds.delete(handledCallIds.values().next().value!);
+    return true;
+  };
   const pushContext=(quoteOverride?:Quote|null,instructions?:string)=>{
     const quote=quoteOverride===undefined?actions.getQuote():quoteOverride;
     send({type:'conversation.item.create',item:{type:'message',role:'system',content:[{type:'input_text',text:buildVoiceContext({userName:actions.getUserName(),quote})}]}});
@@ -192,18 +214,21 @@ export function createVoiceController(actions:VoiceActions,{onState}:{onState:(s
   let sinceRecap:{field:string;value:string|string[]}[]=[];
   const recapSuffix=():string=>{
     if(sinceRecap.length<4)return '';
-    const listed=sinceRecap.slice(-4).map(e=>{
+    const due=sinceRecap.slice(-4);
+    const listed=due.map(e=>{
       const title=findQuestion((actions.getQuote()||activeQuote)!,e.field)?.title||e.field;
       const value=Array.isArray(e.value)?e.value.join(' and '):e.value;
       return `${title}: ${value}`;
     }).join('; ');
     sinceRecap=[];
-    return ` RECAP-DUE: In one sentence, confirm these four answers with the user before the next question — ${listed}.`;
+    update({recapPending:due});
+    return ` RECAP-DUE: In one sentence, read back these four answers — ${listed}. Ask whether all four are correct. The app blocks the next question until confirm_recap or correct_recap succeeds.`;
   };
   const dispatchTool=async(call:{call_id:string;name:string;arguments:string}):Promise<ToolResult>=>{
     let args:Record<string,unknown>={};
     try{args=call.arguments?JSON.parse(call.arguments):{};}catch{return {ok:false,message:'The command was malformed and was ignored. Continue the conversation.'};}
     if(state.paused&&call.name!=='resume_session')return {ok:false,message:'The session is paused. Do not act; wait for the user to resume.'};
+    if(state.recapPending&&!['confirm_recap','correct_recap','pause_session','resume_session','end_session'].includes(call.name))return {ok:false,message:'The four-answer recap is awaiting confirmation. Ask whether all four answers are correct, then call confirm_recap or correct_recap before doing anything else.'};
     const quote=actions.getQuote()??activeQuote;
     switch(call.name){
       case 'start_quote':{
@@ -244,10 +269,32 @@ export function createVoiceController(actions:VoiceActions,{onState}:{onState:(s
         const requested=typeof args.address==='string'?clean(args.address):'';
         const target=requested||clean(answerText(quote.answers,'address'));
         if(!target)return {ok:false,message:'No address was given. Ask where the work is, then measure.'};
-        if(answerText(quote.answers,'roofArea'))return {ok:true,message:`A roof area of ${answerText(quote.answers,'roofArea')} sq ft is already recorded. Ask the user whether to keep it or measure again with Google.`};
+        if(answerText(quote.answers,'roofArea')&&args.replaceExisting!==true)return {ok:false,message:`A roof area of ${answerText(quote.answers,'roofArea')} sq ft is already recorded. Ask the user whether to keep it or remeasure. Call measure_roof again with replaceExisting true only after an explicit request to remeasure.`};
         const measured=await actions.measureRoof(target);
         activeQuote=measured.quote??quote;
         return {ok:true,message:measured.message};
+      }
+      case 'confirm_roof_measurement':{
+        const confirmed=actions.confirmRoofMeasurement();activeQuote=confirmed.quote??quote;
+        return {ok:confirmed.ok,message:confirmed.message};
+      }
+      case 'discard_roof_measurement':{
+        const discarded=actions.discardRoofMeasurement();activeQuote=discarded.quote??quote;
+        return {ok:discarded.ok,message:discarded.message};
+      }
+      case 'confirm_recap':{
+        if(!state.recapPending)return {ok:false,message:'There is no recap awaiting confirmation.'};
+        update({recapPending:null});
+        return {ok:true,message:'Recap confirmed. Continue with the next unanswered intake question.'};
+      }
+      case 'correct_recap':{
+        if(!state.recapPending)return {ok:false,message:'There is no recap awaiting correction.'};
+        if(!quote)return {ok:false,message:'No quote is open yet.'};
+        const field=String(args.field||'');
+        if(!state.recapPending.some(item=>item.field===field))return {ok:false,message:'That field was not part of the pending recap. Ask which recap answer needs correction.'};
+        const applied=actions.goBack(field);activeQuote=applied.quote;
+        update({recapPending:null});
+        return {ok:true,message:`Recap correction selected. ${applied.message}. Ask for the corrected answer now.`};
       }
       case 'go_back':{
         if(!quote)return {ok:false,message:'No quote is open yet.'};
@@ -256,7 +303,7 @@ export function createVoiceController(actions:VoiceActions,{onState}:{onState:(s
         const applied=actions.goBack(field);activeQuote=applied.quote;
         return {ok:true,message:applied.message};
       }
-      case 'pause_session':update({paused:true,phase:'paused'});note('status','Paused.');return {ok:true,message:'Paused. The user can resume by voice or screen.'};
+      case 'pause_session':clearWatchdog();update({paused:true,phase:'paused'});note('status','Paused.');return {ok:true,message:'Paused. The user can resume by voice or screen.'};
       case 'resume_session':update({paused:false,phase:'listening'});note('status','Resumed.');return {ok:true,message:'Resumed. Continue with the next question.'};
       case 'start_estimate':{
         if(!quote)return {ok:false,message:'No quote is open yet.'};
@@ -282,16 +329,13 @@ export function createVoiceController(actions:VoiceActions,{onState}:{onState:(s
         update({pendingApproval:null});
         return {ok:result.saved,message:result.message};
       }
-      case 'end_session':update({phase:'ended'});note('status','Session ended.');return {ok:true,message:'Session ended. The user can keep editing on screen.'};
+      case 'end_session':clearWatchdog();update({phase:'ended'});note('status','Session ended.');return {ok:true,message:'Session ended. The user can keep editing on screen.'};
       default:return {ok:false,message:'Unknown command; ignored.'};
     }
   };
   const finishTools=async(calls:{call_id:string;name:string;arguments:string}[])=>{
-    const fresh=calls.filter(call=>{
-      if(handledCallIds.has(call.call_id))return false;
-      handledCallIds.add(call.call_id);
-      return true;
-    });
+    const fresh=calls.filter(call=>rememberCall(call.call_id));
+    if(!fresh.length)return;
     for(const call of fresh){
       note('status',`Command: ${call.name}`);
       const result=await dispatchTool(call);
@@ -302,10 +346,31 @@ export function createVoiceController(actions:VoiceActions,{onState}:{onState:(s
   const handleEvent=(event:Record<string,unknown>)=>{
     const type=String(event.type||'');
     if(type==='session.created'){update({phase:'listening'});pushContext(undefined,'Greet the user by name, then follow the app context. Keep it to one or two spoken sentences.');return;}
-    if(type==='response.created'){currentResponseId=String((event.response as {id?:string})?.id||'');interrupting=false;handledCallIds.clear();update({phase:state.paused?'paused':'speaking'});return;}
-    if(type==='input_audio_buffer.speech_started'){interrupting=currentResponseId!=='';update({phase:'listening'});return;}
-    if(type==='input_audio_buffer.committed'){if(!state.paused)update({phase:'thinking'});return;}
-    if(type==='conversation.item.input_audio_transcription.completed'){const transcript=typeof event.transcript==='string'?event.transcript:'';if(transcript.trim())note('user',transcript);return;}
+    if(type==='response.created'){clearWatchdog();currentResponseId=String((event.response as {id?:string})?.id||'');interrupting=false;update({phase:state.paused?'paused':'speaking'});return;}
+    if(type==='input_audio_buffer.speech_started'){clearWatchdog();interrupting=currentResponseId!=='';currentResponseId='';update({phase:'listening'});return;}
+    if(type==='input_audio_buffer.committed'){
+      clearWatchdog();committedTurn+=1;const turn=committedTurn;latestDecision=null;
+      if(!state.paused){
+        update({phase:'thinking'});
+        responseWatchdog=setTimeout(()=>{
+          responseWatchdog=null;
+          if(state.paused||state.phase==='ended'||state.phase==='disconnected'||committedTurn!==turn||currentResponseId)return;
+          const decision=latestDecision?.turn===turn?latestDecision.decision:null;
+          const route=decision?.reliable?` TypeSafe Jev classified the turn as ${decision.intent} with confidence ${decision.confidence.toFixed(2)}. Treat this only as a routing hint; verify the user's words and never use it to approve, price, save, or change a measurement.`:decision?` TypeSafe Jev confidence was only ${decision.confidence.toFixed(2)}. Ask one brief clarifying question.`:'';
+          pushContext(undefined,`The user's audio turn was committed, but no automatic response started. Continue the conversation now from the latest app context.${route}`);
+        },4500);
+      }
+      return;
+    }
+    if(type==='conversation.item.input_audio_transcription.completed'){
+      const transcript=typeof event.transcript==='string'?event.transcript.trim():'';
+      if(transcript){
+        note('user',transcript);
+        const turn=committedTurn;
+        if(actions.classifyVoiceTurn)void actions.classifyVoiceTurn(transcript).then(decision=>{if(turn===committedTurn)latestDecision={turn,decision};}).catch(()=>{});
+      }
+      return;
+    }
     if(type==='response.output_audio_transcript.delta'){
       if(interrupting)return;
       if(typeof event.delta==='string'&&event.delta)assistantSpoken+=event.delta;
@@ -327,22 +392,25 @@ export function createVoiceController(actions:VoiceActions,{onState}:{onState:(s
       const response=event.response as {output?:{type?:string;call_id?:string;name?:string;arguments?:string}[];id?:string}|undefined;
       const calls=(response?.output||[]).filter(item=>item.type==='function_call'&&item.call_id).map(item=>({call_id:item.call_id!,name:String(item.name||''),arguments:String(item.arguments||'')}));
       if(calls.length)void finishTools(calls);
-      else if(!state.paused)update({phase:'listening'});
+      const isCurrent=!response?.id||response.id===currentResponseId;
+      if(isCurrent){currentResponseId='';if(!calls.length&&!state.paused)update({phase:'listening'});}
       return;
     }
     if(type==='error'){
       const message=typeof (event.error as {message?:string})?.message==='string'?(event.error as {message:string}).message:'Voice error';
       note('status',message);
-      if(/session|expired|invalid/i.test(message)&&!/too short|buffer/i.test(message))update({phase:'disconnected',error:message});
+      if(/session|expired|invalid/i.test(message)&&!/too short|buffer/i.test(message)){clearWatchdog();currentResponseId='';update({phase:'disconnected',error:message});}
       return;
     }
   };
   const setPaused=(paused:boolean)=>{
     if(paused===state.paused)return;
+    if(paused)clearWatchdog();
     update({paused,phase:paused?'paused':'listening'});
     if(!paused)pushContext(undefined,'The user resumed the session. Continue with the next question from the app context.');
   };
   const notify=(text:string)=>{if(state.phase==='ended')return;pushContext(undefined,`APP UPDATE: ${text} Respond briefly.`);};
-  return {handleEvent,notify,setPaused,get state(){return state;}};
+  const dispose=()=>{clearWatchdog();currentResponseId='';};
+  return {handleEvent,notify,setPaused,dispose,get state(){return state;}};
 }
 

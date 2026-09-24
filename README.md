@@ -41,7 +41,7 @@ docker build -t revive-quote-assistant:local .
 
 Browser drafts remain on that device. An approved portal save is central, but drafts do not synchronize across devices. JSON export is available; no restore/import UI exists yet. Opening the public URL does not transfer drafts from localhost.
 
-Conversational voice, Google automatic roof measurement, attachments and email/SMS delivery remain pending. Nothing contacts suppliers, sends customer messages or makes purchases automatically.
+Conversational voice and optional Google roof measurement are implemented. Google results stay pending until the user confirms the matched building and included roof sections. Optional TypeSafe Jev routing helps classify committed voice turns for pause recovery; deterministic code still owns validation, quote changes, pricing, measurements, approvals and saves. Attachments and email/SMS delivery remain pending. Nothing contacts suppliers, sends customer messages or makes purchases automatically.
 
 ## Configuration and source
 

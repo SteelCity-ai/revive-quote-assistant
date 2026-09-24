@@ -8,7 +8,7 @@ Turn the quote pipeline into a measurable one: record what jobs actually cost, c
 
 ## Why not a classifier (Jev / TypeSafe)
 
-Accuracy requires ground truth — real invoiced cost vs quoted price. Jev-1.13 is a typed classifier (noul/choice/score) with no world model of construction costs; it cannot produce accuracy percentages. It is deferred for this app and stays on the roadmap for the voice feature only (answer validation/confirmation gating), because that is calibrated-probability work. See the Jev section at the bottom.
+Accuracy requires ground truth — real invoiced cost vs quoted price. Jev-1.13 is a typed classifier (noul/choice/score) with no world model of construction costs; it cannot produce accuracy percentages. It is used only for optional voice intent/confidence routing and remains excluded from estimating. See the Jev section at the bottom.
 
 ## Ground truth model (portal-owned)
 
@@ -44,11 +44,12 @@ The portal owns quotes, revisions, projects and financial records — this app h
 - Variance is informational for staff; it does not retroactively change approved revisions.
 - Portal team owns schema/endpoints; this app consumes them read-only through the existing bridge allowlist (add `GET quotes/accuracy` to the allowlist explicitly).
 
-## Jev — deferred decision (recorded so it is not re-litigated)
+## Jev — voice-only decision layer
 
-TypeSafe Jev (`jev-1.13`, ~$0.00003/call, ~300ms, typed probabilities) was evaluated for use in this app on 2026-09-21 and **deferred**:
+TypeSafe Jev 1.13 was evaluated and added as an optional, server-side voice intent classifier:
 
 - Estimate flow already has deterministic validation (`src/domain.ts`) plus AI-report flags (`researchGaps`, unresolved questions) — Jev would duplicate that.
 - It cannot measure estimate accuracy (see above); that is this spec's job.
-- Future fit: the voice feature (validating/extracting spoken answers, gating confirmations by confidence). Revisit then.
-- Integration note if adopted later: Headroom (the shared VPS relay) 404s on TypeSafe's decisions endpoint; the app server must call TypeSafe directly with a `TYPESAFE_API_KEY` in the shared env file, keeping it out of Git.
+- It classifies a committed voice transcript into a fixed intent set and exposes calibrated confidence for recovery/clarification hints. It does not extract prices or quantities and cannot execute a tool.
+- Low-confidence or failed calls fall open to the existing Realtime/domain path. Quote approval, pricing, arithmetic, Google measurement commitment and portal save remain deterministic gates.
+- Headroom does not implement TypeSafe's `/v1/systemone`; the app server calls TypeSafe directly with a server-only `TYPESAFE_API_KEY`. The pinned default is `jev-1.13.0` so threshold behavior does not move without an explicit release.

@@ -4,8 +4,8 @@ import {questions} from './domain';
 import type {Quote,JobType} from './domain';
 import {portalRequest,prepareApproval} from './portal';
 import type {PortalReceipt} from './portal';
-import {createVoiceController,isMissing,nextQuestion} from './voice';
-import type {VoicePhase,VoiceState} from './voice';
+import {applyConfirmedRoofMeasurement,createVoiceController,isMissing,nextQuestion} from './voice';
+import type {PendingRoofMeasurement,VoicePhase,VoiceState} from './voice';
 
 type Props={quote:Quote|null;update:(patch:Partial<Quote>,approval?:boolean)=>void;research:(force?:boolean)=>void;busy:boolean;error:string;startVoiceQuote:(type:JobType,address:string)=>Quote};
 type SessionInfo={clientSecret:string;model:string;webRtcUrl:string};
@@ -17,13 +17,14 @@ const active=(phase:VoicePhase)=>['mic-request','connecting','listening','speaki
 
 export default function VoicePanel({quote,update,research,busy,error,startVoiceQuote}:Props){
   const [available,setAvailable]=useState<boolean|null>(null);
-  const [state,setState]=useState<VoiceState>({phase:'idle',paused:false,transcript:[],pendingApproval:null,error:''});
+  const [jevAvailable,setJevAvailable]=useState(false);
+  const [state,setState]=useState<VoiceState>({phase:'idle',paused:false,transcript:[],pendingApproval:null,recapPending:null,error:''});
   const [muted,setMuted]=useState(false);
   const [typed,setTyped]=useState('');
   const [userName,setUserName]=useState('');
-  const refs={pc:useRef<RTCPeerConnection|null>(null),dc:useRef<RTCDataChannel|null>(null),stream:useRef<MediaStream|null>(null),controller:useRef<ReturnType<typeof createVoiceController>|null>(null),quote:useRef(quote),update:useRef(update),research:useRef(research),startVoiceQuote:useRef(startVoiceQuote),busy:useRef(false)};
+  const refs={pc:useRef<RTCPeerConnection|null>(null),dc:useRef<RTCDataChannel|null>(null),stream:useRef<MediaStream|null>(null),controller:useRef<ReturnType<typeof createVoiceController>|null>(null),quote:useRef(quote),update:useRef(update),research:useRef(research),startVoiceQuote:useRef(startVoiceQuote),busy:useRef(false),pendingRoof:useRef<PendingRoofMeasurement|null>(null)};
   refs.quote.current=quote;refs.update.current=update;refs.research.current=research;refs.startVoiceQuote.current=startVoiceQuote;
-  useEffect(()=>{fetch('/api/app/config').then(r=>r.json()).then(c=>setAvailable(!!c.voiceAvailable)).catch(()=>setAvailable(false));},[]);
+  useEffect(()=>{fetch('/api/app/config').then(r=>r.json()).then(c=>{setAvailable(!!c.voiceAvailable);setJevAvailable(!!c.jevAvailable);}).catch(()=>{setAvailable(false);setJevAvailable(false);});},[]);
   useEffect(()=>{fetch('/api/portal/status').then(r=>r.json()).then(s=>setUserName(String(s.user?.displayName||''))).catch(()=>{});},[]);
   useEffect(()=>{ // report research completion back into the conversation
     const controller=refs.controller.current;if(!controller)return;
@@ -58,12 +59,33 @@ export default function VoicePanel({quote,update,research,busy,error,startVoiceQ
     }catch{return {message:'The Google measurement service is unreachable. Ask the user for their own measurement instead.',quote:refs.quote.current};}
     const current=refs.quote.current;if(!current)return {message:'No quote is open.',quote:null};
     const provenance=`Google aerial imagery${data.imageryDate?` (${data.imageryDate})`:''}${data.imageryQuality?`, quality ${data.imageryQuality}`:''}${data.coveragePercent!=null?`, coverage ${data.coveragePercent}% of ground footprint`:''}`;
-    const answers={...current.answers,roofArea:String(data.roofAreaSqFt),measurementSource:'Google aerial imagery',measurementProvenance:provenance};
-    const updated:Quote={...current,answers};
-    refs.update.current({answers});
-    const message=`Google measured ${Number(data.roofAreaSqFt).toLocaleString()} sq ft of sloped roof surface at ${data.formattedAddress||address}, from ${data.imageryDate||'unknown date'} imagery at ${data.imageryQuality||'unknown'} quality. ${data.note||''} Confirm the building and coverage with the user, then record or edit the roof area.`;
-    return {message,quote:updated};
+    refs.pendingRoof.current={roofAreaSqFt:Number(data.roofAreaSqFt),formattedAddress:data.formattedAddress||address,imageryDate:data.imageryDate||null,imageryQuality:data.imageryQuality||'unknown',coveragePercent:data.coveragePercent??null,note:data.note||'',provenance};
+    const message=`Google measured ${Number(data.roofAreaSqFt).toLocaleString()} sq ft of sloped roof surface at ${data.formattedAddress||address}, from ${data.imageryDate||'unknown date'} imagery at ${data.imageryQuality||'unknown'} quality. ${data.note||''} This measurement is pending and has not changed the quote. Read it back, including any coverage warning, and ask the user to confirm this is the correct building and includes only the roof sections being quoted. Call confirm_roof_measurement only after an explicit yes; otherwise call discard_roof_measurement.`;
+    return {message,quote:current};
   },[]);
+  const confirmRoofMeasurement=useCallback(()=>{
+    const current=refs.quote.current;const pending=refs.pendingRoof.current;
+    if(!current||!pending)return {ok:false,message:'There is no pending Google roof measurement to confirm.',quote:current};
+    const updated=applyConfirmedRoofMeasurement(current,pending);
+    refs.pendingRoof.current=null;refs.update.current({answers:updated.answers});
+    return {ok:true,message:`Confirmed and recorded ${pending.roofAreaSqFt.toLocaleString()} sq ft as measured roof surface area. Continue with the next unanswered question.`,quote:updated};
+  },[]);
+  const discardRoofMeasurement=useCallback(()=>{
+    const current=refs.quote.current;
+    refs.pendingRoof.current=null;
+    return {ok:true,message:'The pending Google roof measurement was discarded and the quote was not changed. Ask for a manual measurement or offer to measure again.',quote:current};
+  },[]);
+  const classifyVoiceTurn=useCallback(async(transcript:string)=>{
+    if(!jevAvailable)return null;
+    const current=refs.quote.current;const question=current?nextQuestion(current):null;
+    try{
+      const response=await fetch('/api/voice/decision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({transcript,currentQuestion:question?.title||'',paused:refs.controller.current?.state.paused||false})});
+      if(!response.ok)return null;
+      const data=await response.json();
+      if(typeof data.intent!=='string'||typeof data.confidence!=='number')return null;
+      return {intent:data.intent,confidence:data.confidence,reliable:Boolean(data.reliable)};
+    }catch{return null;}
+  },[jevAvailable]);
   const saveApproval=useCallback(async(current:Quote):Promise<{saved:boolean;message:string;quote:Quote|null}>=>{
     const prepared=prepareApproval(current);
     const pending={...(current.portal||{clientId:'',customerName:''}),approvalId:prepared.approvalId,fingerprint:prepared.fingerprint,error:undefined,receipt:undefined};
@@ -94,10 +116,14 @@ export default function VoicePanel({quote,update,research,busy,error,startVoiceQ
     },
     startEstimate:()=>{refs.research.current();return {message:'The researched estimate is being prepared. It usually takes about a minute. I will tell you when it is done.',quote:refs.quote.current};},
     measureRoof,
+    confirmRoofMeasurement,
+    discardRoofMeasurement,
+    classifyVoiceTurn,
     saveApproval,
-  }),[userName,startQuote,applyAnswer,saveApproval,measureRoof]);
+  }),[userName,startQuote,applyAnswer,saveApproval,measureRoof,confirmRoofMeasurement,discardRoofMeasurement,classifyVoiceTurn]);
 
   const stop=useCallback((phase:VoicePhase)=>{
+    refs.controller.current?.dispose();
     refs.pc.current?.close();refs.pc.current=null;refs.dc.current=null;
     refs.stream.current?.getTracks().forEach(t=>t.stop());refs.stream.current=null;
     setState(s=>({...s,phase}));

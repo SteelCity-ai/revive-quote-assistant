@@ -1,5 +1,5 @@
 import {describe,it,expect,vi} from 'vitest';
-import {parseNumber,matchChoice,evaluateSetAnswer,evaluateSetAnswerOptions,evaluateMarkUnknown,nextQuestion,voiceReadBack,approvalBlockers,prepareVoiceApproval,confirmVoiceApproval,buildVoiceContext,createVoiceController,isMissing} from './voice';
+import {applyConfirmedRoofMeasurement,parseNumber,matchChoice,evaluateSetAnswer,evaluateSetAnswerOptions,evaluateMarkUnknown,nextQuestion,voiceReadBack,approvalBlockers,prepareVoiceApproval,confirmVoiceApproval,buildVoiceContext,createVoiceController,isMissing} from './voice';
 import {makeQuote,questions,initialLines,totals,money} from './domain';
 import type {Quote,JobType} from './domain';
 
@@ -47,6 +47,14 @@ describe('answer extraction',()=>{
 });
 
 describe('question flow',()=>{
+  it('commits a confirmed Google result as measured sloped roof area without applying pitch again',()=>{
+    const quote=roofingQuote();quote.answers.measurementMode='Building footprint + roof pitch';quote.answers.pitch='12';
+    const updated=applyConfirmedRoofMeasurement(quote,{roofAreaSqFt:2400,formattedAddress:'12 Elm St',imageryDate:'2026-01-01',imageryQuality:'HIGH',coveragePercent:100,note:'',provenance:'Google aerial imagery (2026-01-01)'});
+    expect(updated.answers.measurementMode).toBe('Measured roof surface area');
+    expect(updated.answers.roofArea).toBe('2400');
+    expect(updated.answers.measurementSource).toBe('Google aerial imagery');
+    expect(updated.answers.pitch).toBeUndefined();
+  });
   it('walks required questions in order, respects conditional questions and knows when the guide is complete',()=>{
     const quote=makeQuote('roofing',pricing);
     expect(nextQuestion(quote)?.id).toBe('customer');
@@ -156,7 +164,7 @@ describe('voice context',()=>{
 
 describe('voice controller',()=>{
   type Sent={type:string;[k:string]:unknown};
-  const setup=(quote:Quote|null,overrides:Partial<Record<'startQuote'|'setAnswer'|'markUnknown'|'goBack'|'startEstimate'|'saveApproval',((...args:never[])=>unknown)>>={})=>{
+    const setup=(quote:Quote|null,overrides:Partial<Record<'startQuote'|'setAnswer'|'markUnknown'|'goBack'|'startEstimate'|'measureRoof'|'confirmRoofMeasurement'|'discardRoofMeasurement'|'classifyVoiceTurn'|'saveApproval',((...args:never[])=>unknown)>>={})=>{
     const sent:Sent[]=[];
     const actions={
       getQuote:()=>quote,
@@ -167,6 +175,9 @@ describe('voice controller',()=>{
       goBack:vi.fn(()=>({message:'Revisiting the earlier question.',quote})),
       startEstimate:vi.fn(()=>({message:'Research started.',quote})),
       measureRoof:vi.fn(async()=>({message:'Google measured 2,400 sq ft of roof at the address. Confirm the building with the user.',quote})),
+      confirmRoofMeasurement:vi.fn(()=>({ok:true,message:'Confirmed roof measurement.',quote})),
+      discardRoofMeasurement:vi.fn(()=>({ok:true,message:'Discarded roof measurement.',quote})),
+      classifyVoiceTurn:vi.fn(async()=>null),
       saveApproval:vi.fn(async()=>({saved:true,message:'Saved revision 1.',quote})),
       ...overrides,
     };
@@ -276,9 +287,15 @@ describe('voice controller',()=>{
       expect(after.item.output).toContain('RECAP-DUE');
       expect(after.item.output).toContain('How many layers need to come off?');
     });
-    const after=JSON.parse(output('set_answer'));
-    expect(after.item.output).toContain('ACME roof');
-    expect(after.item.output).toContain('1 layer');
+      const after=JSON.parse(output('set_answer'));
+      expect(after.item.output).toContain('ACME roof');
+      expect(after.item.output).toContain('1 layer');
+      expect(controller.state.recapPending).toHaveLength(4);
+      controller.handleEvent(tool('start_estimate',{}));
+      await vi.waitFor(()=>expect(output('start_estimate')).toContain('recap is awaiting confirmation'));
+      controller.handleEvent(tool('confirm_recap',{}));
+      await vi.waitFor(()=>expect(output('confirm_recap')).toContain('Recap confirmed'));
+      expect(controller.state.recapPending).toBeNull();
   });
   it('offers a Google measurement through the measure_roof tool and refuses it for non-roofing quotes',async()=>{
     const roofing=roofingQuote();
@@ -295,6 +312,15 @@ describe('voice controller',()=>{
     renController.handleEvent({type:'response.created',response:{id:'r2'}});
     renController.handleEvent(itemDone({call_id:'measure_roof_m2',name:'measure_roof',arguments:JSON.stringify({})}));
     await vi.waitFor(()=>expect(ro('measure_roof')).toContain('only available for roofing'));
+  });
+  it('keeps a Google roof result pending until the user explicitly confirms it',async()=>{
+    const quote=roofingQuote();delete quote.answers.roofArea;
+    const {controller,actions}=setup(quote);
+    controller.handleEvent(itemDone({call_id:'measure_pending',name:'measure_roof',arguments:'{}'}));
+    await vi.waitFor(()=>expect(actions.measureRoof).toHaveBeenCalledTimes(1));
+    expect(actions.confirmRoofMeasurement).not.toHaveBeenCalled();
+    controller.handleEvent(itemDone({call_id:'confirm_pending',name:'confirm_roof_measurement',arguments:'{}'}));
+    await vi.waitFor(()=>expect(actions.confirmRoofMeasurement).toHaveBeenCalledTimes(1));
   });
   it('ends the session cleanly',async()=>{
     const {controller,tool,output}=setup(roofingQuote());
@@ -323,12 +349,32 @@ describe('voice controller',()=>{
   it('executes a function call exactly once when both completion events deliver it',async()=>{
     const {controller,actions}=setup(roofingQuote());
     const call={call_id:'dup_1',name:'set_answer',arguments:JSON.stringify({field:'customer',value:'ACME Holdings'})};
-    controller.handleEvent({type:'response.created',response:{id:'resp_1'}});
-    controller.handleEvent(itemDone(call));
-    controller.handleEvent(responseDoneWith(call));
+      controller.handleEvent({type:'response.created',response:{id:'resp_1'}});
+      controller.handleEvent(itemDone(call));
+      controller.handleEvent({type:'response.created',response:{id:'resp_2'}});
+      controller.handleEvent(responseDoneWith(call));
     await vi.waitFor(()=>expect(actions.setAnswer).toHaveBeenCalledTimes(1));
     await new Promise(r=>setTimeout(r,50));
     expect(actions.setAnswer).toHaveBeenCalledTimes(1);
+  });
+  it('nudges a committed voice turn once when no automatic response starts and uses Jev only as a routing hint',async()=>{
+    vi.useFakeTimers();
+    try{
+      const classifyVoiceTurn=vi.fn(async()=>({intent:'resume',confidence:0.88,reliable:true}));
+      const {controller,sent}=setup(roofingQuote(),{classifyVoiceTurn:classifyVoiceTurn as never});
+      controller.handleEvent({type:'input_audio_buffer.committed'});
+      controller.handleEvent({type:'conversation.item.input_audio_transcription.completed',transcript:'keep going'});
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(4500);
+      expect(classifyVoiceTurn).toHaveBeenCalledWith('keep going');
+      const text=JSON.stringify(sent);
+      expect(text).toContain('no automatic response started');
+      expect(text).toContain('routing hint');
+      expect(sent.filter(event=>event.type==='response.create')).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(sent.filter(event=>event.type==='response.create')).toHaveLength(1);
+      controller.dispose();
+    }finally{vi.useRealTimers();}
   });
   it('processes each protected voice command once across both events',async()=>{
     const quote=roofingQuote();
