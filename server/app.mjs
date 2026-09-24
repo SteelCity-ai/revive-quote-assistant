@@ -48,6 +48,48 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
         return json(res,200,result);
       }
       if(req.url==='/api/ai/status'&&req.method==='GET')return json(res,200,{configured:!!env.OPENAI_API_KEY,model:env.OPENAI_ESTIMATE_MODEL||'gpt-5.4-mini-2026-03-17',researchModel:env.OPENAI_MODEL||'gpt-4.1',webResearch:true});
+      if(req.url==='/api/instant/estimate'&&req.method==='POST'){
+        // Public lead-gen endpoint (ponytail): no auth, tight rate limit, tiny payload.
+        if(!env.OPENAI_API_KEY)return json(res,503,{error:'Instant estimates are not configured yet. Please call us for a quote.'});
+        if(production&&!origins.has(req.headers.origin))return json(res,403,{error:'Request origin not allowed.'});
+        if(!req.headers['content-type']?.startsWith('application/json'))return json(res,415,{error:'Use application/json.'});
+        const now=Date.now();for(const [id,times] of roofWindows)if(times.every(t=>now-t>=3600000))roofWindows.delete(id);
+        const identity=req.socket.remoteAddress||'unknown';
+        const seen=(roofWindows.get(identity)||[]).filter(t=>now-t<3600000);
+        if(seen.length>=3)return json(res,429,{error:'Too many instant estimates from this address this hour. Please call us instead.'});
+        let bytes=0;const chunks=[];for await(const chunk of req){bytes+=chunk.length;if(bytes>2000)return json(res,413,{error:'Request too large.'});chunks.push(chunk);}
+        let body;try{body=JSON.parse(Buffer.concat(chunks).toString());}catch{return json(res,400,{error:'Invalid request.'});}
+        const address=typeof body.address==='string'?body.address.trim():'';
+        const work=['Replacement','Repair','Coating / restoration','New installation'].includes(body.roofWork)?body.roofWork:'';
+        if(!address||address.length>200||!work)return json(res,400,{error:'Provide the property address and the type of roof work.'});
+        if(body.roofArea!==undefined&&(!Number.isFinite(Number(body.roofArea))||Number(body.roofArea)<=0||Number(body.roofArea)>10000000))return json(res,400,{error:'Roof area must be a positive number.'});
+        let area=Number(body.roofArea)||null;
+        let measuredNote='';
+        if(!area&&measureRoof){
+          try{const m=await measureRoof(address);if(m.available&&m.roofAreaSqFt){area=Math.round(m.roofAreaSqFt);measuredNote='Roof area measured from Google aerial imagery. Confirm on site.';}}
+          catch{area=null;}
+        }
+        if(!area)return json(res,422,{error:'We could not measure this roof automatically. Please call us with your measurements for a quote.'});
+        const pricing={laborRate:0,markup:15,contingency:0,tax:0};
+        const input=inputSchema.parse({type:'roofing',answers:{address,roofWork:work,roofSystem:String(body.roofSystem||'Other / not decided').slice(0,120),roofArea:String(area)},pricing,area});
+        if(running)return json(res,429,{error:'An estimate is being prepared. Please retry in a moment.'});
+        running=true;roofWindows.set(identity,[...seen,now]);
+        const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),240000);
+        try{
+          const report=await generate(input,{apiKey:env.OPENAI_API_KEY,baseUrl:env.OPENAI_BASE_URL||'https://api.openai.com/v1',model:env.OPENAI_MODEL||'gpt-4.1',estimateModel:env.OPENAI_ESTIMATE_MODEL||'gpt-5.4-mini-2026-03-17',signal:controller.signal});
+          const materials=report.items.reduce((sum,i)=>sum+(i.category!=='labor'?i.quantity*i.unitCost:0),0);
+          const labor=report.items.reduce((sum,i)=>sum+(i.category==='labor'?i.laborHours*i.hourlyRate:0),0);
+          const direct=Math.round((materials+labor)*100)/100;
+          const fee=Math.round(direct*10)/100; // 10% Project Fee (rounds to cents)
+          const markup=Math.round(direct*15)/100; // 15% standard markup
+          const total=Math.round((direct+fee+markup)*100)/100;
+          try{const {appendFile,mkdir}=await import('node:fs/promises');if(env.LEADS_DIR){await mkdir(env.LEADS_DIR,{recursive:true}).catch(()=>{});await appendFile(resolve(env.LEADS_DIR,'instant.jsonl'),JSON.stringify({at:new Date().toISOString(),address,roofWork:work,area,total})+'\n').catch(()=>{});}}catch{}
+          return json(res,200,{summary:report.summary,total,marketLow:report.marketRange?.low??null,marketMid:report.marketRange?Math.round(((report.marketRange.low+report.marketRange.high)/2)*100)/100:null,marketHigh:report.marketRange?.high??null,measuredNote,assumptions:report.assumptions.slice(0,6),followUps:report.questions.slice(0,4)});
+        }catch{if(!res.destroyed)json(res,502,{error:'The instant estimate could not be completed. Please call us and we will quote it directly.'});}
+        finally{clearTimeout(timeout);running=false;}
+        return;
+      }
+
       if(req.url==='/api/ai/estimate'&&req.method==='POST'){
         if(!origins.has(req.headers.origin))return json(res,403,{error:'Request origin not allowed.'});
         if(!req.headers['content-type']?.startsWith('application/json'))return json(res,415,{error:'Use application/json.'});

@@ -11,9 +11,12 @@ services:
       APP_ORIGIN: https://quote.reviverepairco.com
       PORTAL_API_URL: https://portal.reviverepairco.com/api/v1
       OPENAI_BASE_URL: http://100.82.54.127:8877/v1
+      LEADS_DIR: /data/leads
       PORT: '4182'
       BIND_HOST: 127.0.0.1
       RELEASE_SHA: ${RELEASE_SHA}
+    volumes:
+      - /docker/revive-quote-assistant/leads:/data/leads
     read_only: true
     tmpfs:
       - /tmp:size=16m,noexec,nosuid
