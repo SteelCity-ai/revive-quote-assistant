@@ -82,3 +82,10 @@ Rules in force during UAT: synthetic/internal test customers only; no customer a
 - Portal approval: inline customer creation via POST /api/portal/clients (companyName/contact/email).
 - App tests 71/71, tsc clean, build clean, audit 0 vulns; staging loopback gates passed before deploy.
 - Rebased on 0e6ff86 (agent voice hardening + Jev routing); merged recap-block test; suite 71/71.
+
+## Customer-facing features release (2026-09-24)
+
+- App release 150a91bc0800ee1fbae30269348cc4503f83750e deployed: public /instant page (address + work type -> Google measure -> researched estimate -> tiers), POST /api/instant/estimate (3/hr/IP, no auth, leads to LEADS_DIR), pricing tier selector (markup 10/15/20) in Review when marketRange exists.
+- Portal: quote share links + open tracking pixel + e-sign acceptance (0d17f68) and change orders + job costing lite (a154bf3, cherry-picked from local clone; package.json conflict merged). Migrations 0007 + 9000 applied to prod DB in single transactions after pg_dump backup (/root/portal-backup-pre-features.sql).
+- Portal API tests: quotes 8/8, share 4/4, job-costing 5/5 on merged tree. Images rebuilt, containers restarted, health 200, /q/[token] live (307 on unknown token), public API 404 on unknown token as designed.
+- Pending: photo intake sub (9100 migration), supplier catalog (item 9).
