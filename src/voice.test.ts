@@ -6,7 +6,7 @@ import type {Quote,JobType} from './domain';
 const pricing={laborRate:50,markup:15,contingency:10,tax:6};
 const roofingQuote=():Quote=>{
   const quote=makeQuote('roofing',pricing);
-  quote.answers={customer:'ACME Holdings',title:'Elm St roof',address:'12 Elm St, Harrisburg, PA 17101',roofWork:'Replacement',roofSystem:'TPO / PVC membrane',measurementMode:'Measured roof surface area',roofArea:'2400',measurementSource:'Field measured',layers:'1 layer',condition:'Some ponding near the drain.',details:'One curb, two drains.',access:'Single story, driveway access.',waste:'10',schedule:'Within 60 days',permits:'Included in our scope'};
+  quote.answers={customer:'ACME Holdings',address:'12 Elm St, Harrisburg, PA 17101',roofWork:'Replacement',roofSystem:'TPO / PVC membrane',roofArea:'2400'};
   return quote;
 };
 
@@ -29,8 +29,7 @@ describe('answer extraction',()=>{
     expect(evaluateSetAnswer(quote,'roofWork','a full replacement')).toEqual({ok:true,value:'Replacement'});
     expect(evaluateSetAnswer(quote,'roofArea','2,400 square feet')).toEqual({ok:true,value:'2400'});
     expect(evaluateSetAnswer(quote,'roofArea','').ok).toBe(false);
-    expect(evaluateSetAnswer(quote,'waste','150').ok).toBe(false);
-    expect(evaluateSetAnswer(quote,'layers','4 layers').ok).toBe(false);
+    expect(evaluateSetAnswer(quote,'roofArea','abc').ok).toBe(false);
     expect(evaluateSetAnswer(quote,'not-a-field','x').ok).toBe(false);
     expect(evaluateSetAnswer(quote,'trades','Demolition').ok).toBe(false);
   });
@@ -40,7 +39,7 @@ describe('answer extraction',()=>{
     expect(evaluateSetAnswerOptions(quote,'trades',[]).ok).toBe(false);
     expect(evaluateSetAnswerOptions(quote,'customer',['x']).ok).toBe(false);
     const roofing=roofingQuote();
-    expect(evaluateMarkUnknown(roofing,'condition')).toEqual({ok:true,value:'Not sure yet'});
+    expect(evaluateMarkUnknown(roofing,'roofSystem')).toEqual({ok:true,value:'Not sure yet'});
     expect(evaluateMarkUnknown(roofing,'address').ok).toBe(false);
     expect(evaluateMarkUnknown(roofing,'missing').ok).toBe(false);
   });
@@ -61,28 +60,16 @@ describe('question flow',()=>{
     quote.answers.customer='ACME Holdings';
     expect(nextQuestion(quote)?.id).toBe('address');
     quote.answers.address='12 Elm St, Harrisburg, PA 17101';
-    quote.answers.title='Elm St roof';
     quote.answers.roofWork='Replacement';
     quote.answers.roofSystem='TPO / PVC membrane';
-    quote.answers.measurementMode='Building footprint + roof pitch';
     expect(nextQuestion(quote)?.id).toBe('roofArea');
     quote.answers.roofArea='2000';
-    expect(nextQuestion(quote)?.id).toBe('pitch');
-    quote.answers.pitch='4';
-    quote.answers.measurementSource='Field measured';
-    quote.answers.layers='1 layer';
-    quote.answers.condition='Aging membrane';
-    quote.answers.details='Two drains';
-    quote.answers.access='Driveway';
-    quote.answers.waste='10';
-    quote.answers.schedule='Within 60 days';
-    quote.answers.permits='Included in our scope';
     expect(nextQuestion(quote)).toBeNull();
     expect(questions('roofing',quote.answers).filter(q=>isMissing(q,quote.answers)).map(q=>q.id)).toEqual([]);
   });
   it('records unknown answers as flagged-for-review without blocking the flow',()=>{
     const quote=roofingQuote();
-    quote.answers.waste='Not sure yet';
+    quote.answers.roofSystem='Not sure yet';
     // Recorded "I don't know" is an answer, not a gap: the flow moves on…
     expect(nextQuestion(quote)).toBeNull();
     expect(questions('roofing',quote.answers).filter(q=>isMissing(q,quote.answers)).map(q=>q.id)).toEqual([]);
@@ -201,7 +188,7 @@ describe('voice controller',()=>{
   it('refuses invalid answers without mutating the draft',async()=>{
     const {controller,actions,tool,output}=setup(roofingQuote());
     controller.handleEvent(tool('set_answer',{field:'waste',value:'150'}));
-    await vi.waitFor(()=>expect(output('set_answer')).toContain('not a valid'));
+    await vi.waitFor(()=>expect(output('set_answer')).toContain('is not a question of this quote'));
     expect(actions.setAnswer).not.toHaveBeenCalled();
   });
   it('creates a quote from voice and refuses a second one while one is open',async()=>{
@@ -239,7 +226,7 @@ describe('voice controller',()=>{
   });
   it('refuses to start the estimate while intake is incomplete and starts it when complete',async()=>{
     const partial=roofingQuote();
-    delete (partial.answers as Record<string,unknown>).schedule;
+    delete (partial.answers as Record<string,unknown>).roofArea;
     const {controller,actions,tool,output}=setup(partial);
     controller.handleEvent(tool('start_estimate',{}));
     await vi.waitFor(()=>expect(output('start_estimate')).toContain('incomplete'));
@@ -275,27 +262,27 @@ describe('voice controller',()=>{
   it('recaps after every fourth recorded answer instead of confirming each one',async()=>{
     const {controller,tool,output}=setup(roofingQuote());
     controller.handleEvent({type:'response.created',response:{id:'r1'}});
-    controller.handleEvent(tool('set_answer',{field:'title',value:'ACME roof'}));
-    await vi.waitFor(()=>expect(output('set_answer')).toContain('recorded'));
+    const fresh=roofingQuote();delete (fresh.answers as Record<string,unknown>).roofArea;
     controller.handleEvent(tool('set_answer',{field:'roofWork',value:'Replacement'}));
-    controller.handleEvent(tool('set_answer',{field:'measurementMode',value:'Measured roof surface area'}));
+    await vi.waitFor(()=>expect(output('set_answer')).toContain('recorded'));
+    controller.handleEvent(tool('set_answer',{field:'roofSystem',value:'TPO / PVC membrane'}));
+    controller.handleEvent(tool('set_answer',{field:'roofArea',value:'2400'}));
     const before=JSON.parse(output('set_answer'));
     expect(before.item.output).not.toContain('RECAP-DUE'); // three answers: no recap yet
-    controller.handleEvent(tool('set_answer',{field:'layers',value:'1 layer'}));
+    controller.handleEvent(tool('set_answer',{field:'customer',value:'ACME Holdings'}));
     await vi.waitFor(()=>{
       const after=JSON.parse(output('set_answer'));
       expect(after.item.output).toContain('RECAP-DUE');
-      expect(after.item.output).toContain('How many layers need to come off?');
     });
-      const after=JSON.parse(output('set_answer'));
-      expect(after.item.output).toContain('ACME roof');
-      expect(after.item.output).toContain('1 layer');
-      expect(controller.state.recapPending).toHaveLength(4);
-      controller.handleEvent(tool('start_estimate',{}));
-      await vi.waitFor(()=>expect(output('start_estimate')).toContain('recap is awaiting confirmation'));
-      controller.handleEvent(tool('confirm_recap',{}));
-      await vi.waitFor(()=>expect(output('confirm_recap')).toContain('Recap confirmed'));
-      expect(controller.state.recapPending).toBeNull();
+    const after=JSON.parse(output('set_answer'));
+    expect(after.item.output).toContain('What roof system are we quoting?');
+    expect(after.item.output).toContain('TPO');
+    expect(controller.state.recapPending).toHaveLength(4);
+    controller.handleEvent(tool('start_estimate',{}));
+    await vi.waitFor(()=>expect(output('start_estimate')).toContain('recap is awaiting confirmation'));
+    controller.handleEvent(tool('confirm_recap',{}));
+    await vi.waitFor(()=>expect(output('confirm_recap')).toContain('Recap confirmed'));
+    expect(controller.state.recapPending).toBeNull();
   });
   it('offers a Google measurement through the measure_roof tool and refuses it for non-roofing quotes',async()=>{
     const roofing=roofingQuote();
@@ -330,15 +317,12 @@ describe('voice controller',()=>{
   });
   it('moves on after I-dont-know instead of re-asking the flagged question',()=>{
     const quote=roofingQuote();
-    delete quote.answers.details; // "What roof details need attention?" allows unknown
-    const verdict=evaluateMarkUnknown(quote,'details');
+    delete quote.answers.roofSystem; // the system question allows unknown
+    const verdict=evaluateMarkUnknown(quote,'roofSystem');
     expect(verdict).toEqual({ok:true,value:'Not sure yet'});
-    const after={...quote,answers:{...quote.answers,details:'Not sure yet'}};
+    const after={...quote,answers:{...quote.answers,roofSystem:'Not sure yet'}};
     // The recorded unknown is no longer reported as the next question to ask.
-    expect(nextQuestion(after)?.id).not.toBe('details');
-    // And a fully unknown-flagged intake does not block estimate generation.
-    const flagged:Quote={...after,answers:{...after.answers,condition:'Not sure yet',access:'Not sure yet'}};
-    expect(nextQuestion(flagged)?.id).not.toBe('details');
+    expect(nextQuestion(after)?.id).toBeUndefined();
   });
 
 

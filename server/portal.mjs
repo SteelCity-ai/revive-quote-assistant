@@ -57,6 +57,7 @@ export function createPortalHandler({baseUrl,origins,fetcher=fetch,secureCookies
       const {data:user}=await api('/me',session);if(user.role!=='ADMIN'){reply(res,403,{error:'Only portal administrators can manage quotes.'});return true;}
       let target;
       if(path==='/api/portal/clients'&&req.method==='GET')target='/clients';
+      if(path==='/api/portal/clients'&&req.method==='POST')target='/clients';
       if(path==='/api/portal/quotes'&&req.method==='POST')target='/quotes';
       if(/^\/api\/portal\/quotes\/[a-f0-9-]{36}$/.test(path)&&req.method==='GET')target=path.replace('/api/portal','');
       if(!target){reply(res,404,{error:'Not found'});return true;}

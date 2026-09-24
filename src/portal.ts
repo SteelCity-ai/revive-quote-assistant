@@ -1,5 +1,5 @@
 import type {Quote} from './domain';
-import {newId} from './domain';
+import {newId,derivedTitle} from './domain';
 export type PortalUser={id?:string;userId?:string;displayName:string;role:string;email:string};
 export type PortalStatus={configured:boolean;user:PortalUser|null;ready:boolean;error?:string;portalUrl?:string};
 export type PortalReceipt={id:string;revision:number;approvedAt:string;status:string;projectId:string|null};
@@ -10,7 +10,7 @@ export async function portalRequest<T>(path:string,body?:unknown):Promise<T>{
   if(response.status===401)window.dispatchEvent(new Event('revive-session-expired'));
   if(!response.ok)throw new Error(data.error||'The portal could not save this quote.');return data;
 }
-export function portalSnapshot(q:Quote){return {id:q.id,type:q.type,kind:q.kind,answers:q.answers,lines:q.lines,pricing:q.pricing,assumptions:q.assumptions,exclusions:q.exclusions,terms:q.terms,acknowledged:true as const,...(q.ai?{ai:q.ai}:{})};}
+export function portalSnapshot(q:Quote){const answers=q.answers.title?q.answers:{...q.answers,title:derivedTitle(q)};return {id:q.id,type:q.type,kind:q.kind,answers,lines:q.lines,pricing:q.pricing,assumptions:q.assumptions,exclusions:q.exclusions,terms:q.terms,acknowledged:true as const,...(q.ai?{ai:q.ai}:{})};}
 export const approvalFingerprint=(q:Quote)=>JSON.stringify({clientId:q.portal?.clientId,quote:portalSnapshot(q)});
 export function prepareApproval(q:Quote){
   const fingerprint=approvalFingerprint(q);

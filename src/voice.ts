@@ -1,4 +1,4 @@
-import {answerText,jobNames,money,questions,totals,validAnswer,issues} from './domain';
+import {answerText,derivedTitle,jobNames,money,questions,totals,validAnswer,issues} from './domain';
 import type {Quote,Question,JobType,Answers} from './domain';
 import {approvalFingerprint,prepareApproval} from './portal';
 
@@ -92,8 +92,8 @@ export function voiceReadBack(quote:Quote):string{
   const t=totals(quote.lines,quote.pricing);
   const unresolved=issues(quote).filter(i=>!i.startsWith('AI follow-up:'));
   const parts=[
-    `Job: ${answerText(quote.answers,'title')||'Untitled job'} — ${jobNames[quote.type]} for ${answerText(quote.answers,'customer')||'the customer on file'} at ${answerText(quote.answers,'address')||'the address on file'}.`,
-    `Total: ${money(t.total)} (direct costs ${money(t.direct)}, markup ${quote.pricing.markup}%, contingency ${quote.pricing.contingency}%, tax ${quote.pricing.tax}%).`,
+    `Job: ${derivedTitle(quote)} — ${jobNames[quote.type]} for ${answerText(quote.answers,'customer')||'the customer on file'} at ${answerText(quote.answers,'address')||'the address on file'}.`,
+    `Total: ${money(t.total)} (direct costs ${money(t.direct)}, markup ${quote.pricing.markup}%, Project Fee ${money(t.fee)}, contingency ${quote.pricing.contingency}%, tax ${quote.pricing.tax}%).`,
   ];
   const assumptions=quote.assumptions.trim();
   parts.push(assumptions?`Material and pricing assumptions: ${assumptions.split('\n').filter(Boolean).join('; ')}.`:'No material assumptions were recorded.');

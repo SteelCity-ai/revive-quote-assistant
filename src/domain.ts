@@ -20,26 +20,18 @@ export function questions(type: JobType, a: Answers): Question[] {
   const result: Question[] = [
     q('customer', 'Who is this quote for?', 'Enter the customer or company name. You can link a portal customer when the connection is available.', 'text', 'The job'),
     q('address', 'Where is the work?', 'Enter the full job address, including city and ZIP. This will also be used for roof lookup and local pricing.', 'text', 'The job'),
+  ];
+  if (type !== 'roofing') result.push(
     q('title', 'Give this job a short name.', 'Something you’ll recognize later, like “Union Deposit office build-out.”', 'text', 'The job'),
     q('contact', 'How can you reach the customer?', 'Add an email address or phone number for your records. Nothing is sent from this version.', 'text', 'The job', { optional: true }),
-  ];
+  );
   if (type === 'roofing') {
+    // ponytail: basics-only intake (Mike's call) — address, work type, material,
+    // measured area; the rest is filled in by defaults and the AI estimate.
     result.push(
-      q('roofWork', 'What does the roof need?', 'Choose the main scope. We’ll tailor the questions and estimate lines to it.', 'choice', 'Roof scope', { options: ['Replacement', 'Repair', 'Coating / restoration', 'New installation'] }),
+      q('roofWork', 'What does the roof need?', 'Choose the main scope. We’ll tailor the estimate to it.', 'choice', 'Roof scope', { options: ['Replacement', 'Repair', 'Coating / restoration', 'New installation'] }),
       q('roofSystem', 'What roof system are we quoting?', 'For a replacement, select the proposed system. Record the existing system in the condition notes.', 'choice', 'Roof scope', { options: ['TPO / PVC membrane', 'EPDM membrane', 'Modified bitumen / built-up', 'Metal', 'Asphalt shingles', 'Other / not decided'], unknown: true }),
-      q('measurementMode', 'How will we measure the work area?', 'Use only the roof sections included in this quote. Automatic roof measurement will be available after Google is connected.', 'choice', 'Measurements', { options: ['Measured roof surface area', 'Building footprint + roof pitch'], unknown: true }),
-    );
-    if (answerText(a, 'measurementMode') !== 'Not sure yet') {
-      result.push(q('roofArea', 'How large is the area being quoted?', answerText(a, 'measurementMode') === 'Building footprint + roof pitch' ? 'Enter the horizontal footprint. We’ll use pitch to estimate roof surface area. For mixed pitches, use separately measured surface areas instead.' : 'Enter the actual roof surface area, including slope. For a repair, enter only the affected area.', 'number', 'Measurements', { unit: 'sq ft', unknown: true }));
-      if (answerText(a, 'measurementMode') === 'Building footprint + roof pitch') result.push(q('pitch', 'What is the roof pitch?', 'Enter inches of rise per 12 inches of run. Use 0 for a flat roof, 4 for a 4:12 pitch.', 'number', 'Measurements', { unit: '/ 12', unknown: true }));
-      result.push(q('measurementSource', 'Where did these measurements come from?', 'Keep a clear record of how the roof was measured.', 'choice', 'Measurements', { options: ['Google aerial imagery', 'Field measured', 'Plans / drawings', 'Aerial report', 'Rough estimate'], unknown: true }));
-    }
-    if (answerText(a, 'roofWork') === 'Replacement') result.push(q('layers', 'How many layers need to come off?', 'This affects labor, disposal and the condition of the exposed deck.', 'choice', 'Roof scope', { options: ['1 layer', '2 layers', '3 or more layers', 'Overlay — no tear-off'], unknown: true }));
-    result.push(
-      q('condition', 'What do we know about the existing roof?', 'Describe leaks, wet insulation, deck damage, drainage, and the existing system. Call out anything that still needs inspection.', 'textarea', 'Roof scope', { unknown: true }),
-      q('details', 'What roof details need attention?', 'List drains, scuppers, penetrations, curbs, flashing and edge conditions. Include counts or lengths when known.', 'textarea', 'Roof scope', { unknown: true }),
-      q('access', 'How will the crew access the roof?', 'Include building height, staging, lifts or cranes, tenant restrictions and disposal access.', 'textarea', 'Site conditions', { unknown: true }),
-      q('waste', 'What material waste allowance should we use?', 'Enter a percentage based on the system and layout. Applied to primary roof material quantity only, not labor or tear-off.', 'number', 'Measurements', { unit: '%', unknown: true }),
+      q('roofArea', 'How large is the roof area being quoted?', 'Enter the roof surface area including slope — or tap “Measure with Google” and confirm the result.', 'number', 'Measurements', { unit: 'sq ft', unknown: true }),
     );
   } else {
     result.push(
@@ -52,7 +44,7 @@ export function questions(type: JobType, a: Answers): Question[] {
     result.push(q('occupied', 'Will the space be occupied during work?', 'This helps identify phasing, protection and working-hour requirements.', 'choice', 'Site conditions', { options: ['Vacant', 'Occupied — normal hours', 'Occupied — after hours / phased'], unknown: true }),
       q('access', 'What site restrictions should we allow for?', 'Include loading, parking, stairs or elevators, dust control, protection, working hours and disposal.', 'textarea', 'Site conditions', { unknown: true }));
   }
-  result.push(q('schedule', 'When does the work need to happen?', 'Include a target start, deadline, or whether the schedule is flexible.', 'text', 'Finish the scope', { unknown: true }),
+  if (type !== 'roofing') result.push(q('schedule', 'When does the work need to happen?', 'Include a target start, deadline, or whether the schedule is flexible.', 'text', 'Finish the scope', { unknown: true }),
     q('permits', 'What about permits and inspections?', 'Confirm responsibility and add fees as estimate lines if included.', 'choice', 'Finish the scope', { options: ['Included in our scope', 'Customer / others responsible', 'Not required — verified'], unknown: true }),
     q('notes', 'Anything else we should capture?', 'Add warranties, special requirements, site-visit notes or customer requests. You can edit exclusions and terms before approval.', 'textarea', 'Finish the scope', { optional: true }));
   return result;
@@ -69,14 +61,23 @@ export function validAnswer(question: Question, value: string | string[] | undef
   return true;
 }
 export function roofMeasurement(a: Answers): { area: number | null; materialArea: number | null; pitchAdjusted: boolean } {
+  // ponytail: pitch flow was cut from the basic intake; answers may still carry it from old quotes.
   const footprint = answerText(a, 'measurementMode') === 'Building footprint + roof pitch';
   if (answerText(a, 'measurementMode') === 'Not sure yet') return { area: null, materialArea: null, pitchAdjusted: false };
   const raw = Number(a.roofArea);
   const pitch = footprint ? Number(a.pitch) : 0;
   if (!Number.isFinite(raw) || raw <= 0 || (footprint && (!answerText(a, 'pitch') || !Number.isFinite(pitch) || pitch < 0 || pitch > 24))) return { area: null, materialArea: null, pitchAdjusted: footprint };
   const area = raw * Math.sqrt(1 + (pitch / 12) ** 2);
-  const waste = answerText(a, 'waste') ? Number(a.waste) : NaN;
+  const waste = answerText(a, 'waste') ? Number(a.waste) : 10; // ponytail: 10% default waste when the question is skipped
   return { area, materialArea: Number.isFinite(waste) && waste >= 0 && waste <= 100 ? area * (1 + waste / 100) : null, pitchAdjusted: footprint };
+}
+export function derivedTitle(quote: Quote): string {
+  const title = answerText(quote.answers, 'title');
+  if (title) return title;
+  // ponytail: project name = street address + work type (Mike's rule).
+  const street = answerText(quote.answers, 'address').split(',')[0].trim() || 'New job';
+  const work = quote.type === 'roofing' ? `roof ${(answerText(quote.answers, 'roofWork') || 'work').toLowerCase()}` : jobNames[quote.type].toLowerCase();
+  return `${street} ${work}`.slice(0, 120);
 }
 export const newId = () => {
   if(globalThis.crypto?.randomUUID)return globalThis.crypto.randomUUID();
@@ -109,7 +110,8 @@ export function totals(lines: Line[], pricing: Pricing) {
   const contingency = round(direct * pricing.contingency / 100);
   const markup = round((direct + contingency) * pricing.markup / 100);
   const tax = round(materials * pricing.tax / 100);
-  return { materials, labor, direct, contingency, markup, tax, total: round(direct + contingency + markup + tax) };
+  const fee = round(direct * 10 / 100); // Project Fee — always applied (Mike)
+  return { materials, labor, direct, contingency, markup, tax, fee, total: round(direct + contingency + markup + tax + fee) };
 }
 export function issues(quote: Quote): string[] {
   const missing = questions(quote.type, quote.answers).filter(question => !question.optional && (!validAnswer(question, quote.answers[question.id]) || quote.answers[question.id] === 'Not sure yet')).map(question => question.title);

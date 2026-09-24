@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaults, initialLines, issues, makeQuote, questions, roofMeasurement, totals, validAnswer } from './domain';
+import { defaults, derivedTitle, initialLines, issues, makeQuote, questions, roofMeasurement, totals, validAnswer } from './domain';
 import type { Line } from './domain';
 describe('guided questions', () => {
   it('asks only the selected trades and updates when the selection changes', () => {
@@ -8,19 +8,14 @@ describe('guided questions', () => {
     expect(first.some(q => q.id === 'trade:Plumbing')).toBe(false);
     expect(questions('contracting', { trades: ['Plumbing'] }).some(q => q.id === 'trade:Electrical')).toBe(false);
   });
-  it('only asks tear-off layers for replacements and pitch for footprint measurements', () => {
-    expect(questions('roofing', { roofWork: 'Repair', measurementMode: 'Measured roof surface area' }).map(q => q.id)).not.toContain('layers');
-    const replacement = questions('roofing', { roofWork: 'Replacement', measurementMode: 'Building footprint + roof pitch' }).map(q => q.id);
-    expect(replacement).toContain('layers'); expect(replacement).toContain('pitch');
-    expect(questions('roofing', { measurementMode: 'Not sure yet' }).map(q => q.id)).not.toContain('roofArea');
+  it('keeps the roofing intake to the basics: customer, address, work, system, area', () => {
+    expect(questions('roofing', {}).map(q => q.id)).toEqual(['customer', 'address', 'roofWork', 'roofSystem', 'roofArea']);
+    expect(questions('roofing', {}).map(q => q.id)).not.toContain('title'); // project name is derived
   });
   it('does not turn unknown or blank measurements into valid numbers', () => {
-    const list = questions('roofing', { measurementMode: 'Building footprint + roof pitch' });
-    const area = list.find(q => q.id === 'roofArea')!;
-    const pitch = list.find(q => q.id === 'pitch')!;
+    const area = questions('roofing', {}).find(q => q.id === 'roofArea')!;
     expect(validAnswer(area, '')).toBe(false); expect(validAnswer(area, '0')).toBe(false);
-    expect(validAnswer(area, '-50')).toBe(false); expect(validAnswer(pitch, '0')).toBe(true);
-    expect(validAnswer(pitch, '25')).toBe(false); expect(validAnswer(area, 'Not sure yet')).toBe(true);
+    expect(validAnswer(area, '-50')).toBe(false); expect(validAnswer(area, 'Not sure yet')).toBe(true);
   });
 });
 describe('roof quantities', () => {
@@ -45,9 +40,16 @@ describe('roof quantities', () => {
   });
 });
 describe('pricing and review', () => {
+  it('derives the project name from address and work type', () => {
+    const quote = makeQuote('roofing', defaults);
+    quote.answers = { address: '123 High St, Harrisburg, PA 17101', roofWork: 'Repair' };
+    expect(derivedTitle(quote)).toBe('123 High St roof repair');
+    quote.answers.title = 'Custom name';
+    expect(derivedTitle(quote)).toBe('Custom name');
+  });
   it('uses total labor hours rather than multiplying labor by quantity', () => {
     const lines: Line[] = [{ id: '1', description: 'Work', quantity: 10, unit: 'each', material: 20, hours: 4, rate: 50 }];
-    expect(totals(lines, { laborRate: 50, contingency: 10, markup: 15, tax: 6 })).toEqual({ materials: 200, labor: 200, direct: 400, contingency: 40, markup: 66, tax: 12, total: 518 });
+    expect(totals(lines, { laborRate: 50, contingency: 10, markup: 15, tax: 6 })).toEqual({ materials: 200, labor: 200, direct: 400, contingency: 40, markup: 66, tax: 12, fee: 40, total: 558 });
   });
   it('flags zero-price lines and missing fixed quote terms', () => {
     const quote = makeQuote('contracting', defaults); quote.kind = 'fixed';

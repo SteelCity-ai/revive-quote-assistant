@@ -17,7 +17,7 @@ export default function Guide({ quote, update, exit, finish, connections }: { qu
   useEffect(() => { setError(''); heading.current?.focus(); window.scrollTo({ top: 0 }); }, [question.id]);
   useEffect(() => { let active = true; fetch('/api/app/config').then(r => r.json()).then(c => { if (active) setRoofAvailable(!!c.roofMeasurementAvailable); }).catch(() => {}); return () => { active = false; }; }, []);
   const setAnswer = (answer: string | string[]) => { setError(''); update({ answers: { ...quote.answers, [question.id]: answer } }); };
-  const canMeasure = quote.type === 'roofing' && roofAvailable && ['measurementMode', 'roofArea', 'measurementSource'].includes(question.id);
+  const canMeasure = quote.type === 'roofing' && roofAvailable && question.id === 'roofArea';
   const googleMeasure = async () => {
     const address = String(quote.answers.address ?? '').trim();
     if (!address) { setError('Enter the job address before requesting a Google measurement.'); return; }
@@ -41,7 +41,7 @@ export default function Guide({ quote, update, exit, finish, connections }: { qu
   };
   const next = () => { if (!validAnswer(question, value)) { setError(question.type === 'number' ? 'Enter a valid measurement, or choose “I’m not sure yet.”' : 'Add an answer to continue.'); return; } if (step === list.length - 1) finish(); else update({ step: step + 1 }); };
   return <><div className="workspace"><main className="guide"><Stepper stage="guide"/><div className="question-progress"><span>{question.section}</span><span>{step + 1} of {list.length}</span></div><div className="progress-track"><div style={{ width: `${(step+1)/list.length*100}%` }}/></div><section className="question"><h1 ref={heading} tabIndex={-1}>{question.title}</h1><p className="question-help" id="question-help">{question.help}</p>
-    {question.id === 'measurementMode' && !roofAvailable && <button className="feature-callout" onClick={connections}><MapPinned size={22}/><span><strong>Automatic roof measurement</strong><small>Connect Google later. Manual measurements work now.</small></span><ArrowRight size={17}/></button>}
+    {question.id === 'roofArea' && !roofAvailable && <button className="feature-callout" onClick={connections}><MapPinned size={22}/><span><strong>Automatic roof measurement</strong><small>Connect Google later. Manual measurements work now.</small></span><ArrowRight size={17}/></button>}
     {canMeasure && <button type="button" className="feature-callout" disabled={measuring} onClick={googleMeasure}>{measuring ? <LoaderCircle size={22} className="spin" aria-hidden="true"/> : <MapPinned size={22}/>}<span><strong>{measuring ? 'Measuring with Google…' : 'Measure with Google'}</strong><small>Uses aerial imagery. Always verify against the sections being quoted.</small></span>{!measuring && <ArrowRight size={17}/>}</button>}
     {measureNote && canMeasure && <p className="inline-note" role="status"><Lightbulb size={17}/>{measureNote}</p>}
     <form onSubmit={e => { e.preventDefault(); next(); }}>
