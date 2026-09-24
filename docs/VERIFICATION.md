@@ -71,3 +71,14 @@ The canonical portal working tree remained clean. No portal service, database or
 | 7 | Defects found/fixed during UAT | fixed locally; release verification pending | session-level call-ID dedupe, pending Google confirmation, deterministic recap gate, medium VAD + one-shot watchdog, optional Jev routing |
 
 Rules in force during UAT: synthetic/internal test customers only; no customer acceptance evidence; no portal redeploy; Google-derived data kept minimal (no imagery or raw API payloads in PDFs); every reproducible defect gets a regression test + smallest-component fix + full suite + staging before any production deploy.
+
+## Basics-first intake + Project Fee release (2026-09-23)
+
+- App release 20a09a6e59f47c4d28ed2fb3d269cd54ffec6ad2 deployed; healthz reports SHA; config flags true.
+- Roofing intake now 5 questions (customer, address, roofWork, roofSystem, roofArea); title/contact/schedule/permits/notes and the pitch/condition/details/access/waste block removed for roofing; waste defaults 10%.
+- Project Fee: 10% of direct costs, in totals(), review PDF view, voice read-back; portal quoteTotals/PDF mirror it (portal commit 225e566, tests 8/8, deployed to revive-portal-prod-api).
+- Project name derived as street address + work type; portal PLANNED project receives it via portalSnapshot.
+- marketRange (low/mid/high, zip-grounded, mid-to-high bias) added to estimate research prompt + comparison tab.
+- Portal approval: inline customer creation via POST /api/portal/clients (companyName/contact/email).
+- App tests 71/71, tsc clean, build clean, audit 0 vulns; staging loopback gates passed before deploy.
+- Rebased on 0e6ff86 (agent voice hardening + Jev routing); merged recap-block test; suite 71/71.
