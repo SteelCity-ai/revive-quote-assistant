@@ -4,10 +4,12 @@ export type JobType = 'renovation' | 'roofing' | 'contracting';
 export type Answers = Record<string, string | string[]>;
 export type Line = { id: string; description: string; quantity: number; unit: string; material: number; hours: number; rate: number };
 export type Pricing = { laborRate: number; markup: number; contingency: number; tax: number };
+export type TierKey = 'value' | 'standard' | 'premium';
 export type Quote = {
   id: string; type: JobType; createdAt: string; updatedAt: string; step: number;
   stage: 'guide' | 'pricing' | 'review'; answers: Answers; lines: Line[]; pricing: Pricing;
   exclusions: string; assumptions: string; terms: string; kind: 'estimate' | 'fixed';
+  tier?: TierKey; discountPercent?: number; // chosen Good/Better/Best tier and owner discount — survive retry and ride in the portal snapshot
   approvedAt?: string; acknowledged: boolean; ai?: AIReport; portal?: PortalSync;
 };
 export const jobNames: Record<JobType, string> = { renovation: 'Commercial renovation', roofing: 'Roofing', contracting: 'General contracting' };

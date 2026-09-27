@@ -12,7 +12,7 @@ export async function portalRequest<T>(path:string,body?:unknown):Promise<T>{
   if(response.status===401)window.dispatchEvent(new Event('revive-session-expired'));
   if(!response.ok)throw new Error(data.error||'The portal could not save this quote.');return data;
 }
-export function portalSnapshot(q:Quote){const answers=q.answers.title?q.answers:{...q.answers,title:derivedTitle(q)};return {id:q.id,type:q.type,kind:q.kind,answers,lines:q.lines,pricing:q.pricing,assumptions:q.assumptions,exclusions:q.exclusions,terms:q.terms,acknowledged:true as const,...(q.ai?{ai:q.ai}:{})};}
+export function portalSnapshot(q:Quote){const answers=q.answers.title?q.answers:{...q.answers,title:derivedTitle(q)};return {id:q.id,type:q.type,kind:q.kind,answers,lines:q.lines,pricing:q.pricing,assumptions:q.assumptions,exclusions:q.exclusions,terms:q.terms,acknowledged:true as const,...(q.tier?{tier:q.tier}:{}),...(q.discountPercent?{discountPercent:q.discountPercent}:{}),...(q.ai?{ai:q.ai}:{})};}
 export const approvalFingerprint=(q:Quote)=>JSON.stringify({clientId:q.portal?.clientId,quote:portalSnapshot(q)});
 export function prepareApproval(q:Quote){
   const fingerprint=approvalFingerprint(q);

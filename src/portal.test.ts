@@ -12,6 +12,16 @@ it('does not upload local navigation state or sync receipts as quote content',()
   const q=makeQuote('roofing',defaults);q.portal={clientId:'customer',customerName:'Customer'};
   expect(portalSnapshot(q)).not.toHaveProperty('portal');expect(portalSnapshot(q)).not.toHaveProperty('step');
 });
+it('rides the chosen tier and discount in the snapshot, and moves the fingerprint when either changes',()=>{
+  const q=makeQuote('roofing',defaults);q.portal={clientId:'customer',customerName:'Customer'};
+  expect(portalSnapshot(q)).not.toHaveProperty('tier'); // no tier chosen yet — nothing invented
+  q.tier='standard';q.discountPercent=10;
+  expect(portalSnapshot(q)).toMatchObject({tier:'standard',discountPercent:10});
+  const saved=approvalFingerprint(q);
+  q.discountPercent=12.5;expect(approvalFingerprint(q)).not.toBe(saved); // retry flow opens a new revision
+  q.discountPercent=10;q.tier='premium';expect(approvalFingerprint(q)).not.toBe(saved);
+  q.tier='standard';expect(approvalFingerprint(q)).toBe(saved); // back to the saved revision
+});
 it('invalidates the saved state and customer link when the quote is edited after a save',()=>{
   const q=makeQuote('contracting',defaults);
   q.portal={clientId:'customer',customerName:'Customer'};
