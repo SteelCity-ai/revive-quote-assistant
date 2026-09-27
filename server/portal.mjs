@@ -59,11 +59,14 @@ export function createPortalHandler({baseUrl,origins,fetcher=fetch,secureCookies
       if(path==='/api/portal/clients'&&req.method==='GET')target='/clients';
       if(path==='/api/portal/clients'&&req.method==='POST')target='/clients';
       if(path==='/api/portal/quotes'&&req.method==='POST')target='/quotes';
+      if(path==='/api/portal/assemblies'&&req.method==='GET')target='/assemblies';
+      if(/^\/api\/portal\/assemblies\/[a-f0-9-]{36}$/.test(path)&&req.method==='GET')target=path.replace('/api/portal','');
       if(/^\/api\/portal\/quotes\/[a-f0-9-]{36}$/.test(path)&&req.method==='GET')target=path.replace('/api/portal','');
       if(/^\/api\/portal\/quotes\/[a-f0-9-]{36}\/share$/.test(path)&&(req.method==='GET'||req.method==='POST'))target=path.replace('/api/portal','');
       if(!target){reply(res,404,{error:'Not found'});return true;}
       const payload=req.method==='POST'?await body(req):undefined;
-      const {data}=await api(target,session,req.method,payload);reply(res,200,data);return true;
+      const query=(req.url||'').split('?')[1];
+      const {data}=await api(target+(query?`?${query}`:''),session,req.method,payload);reply(res,200,data);return true;
     }catch(e){if(e.status===401&&sid)sessions.delete(sid);reply(res,Number.isInteger(e.status)?e.status:502,{error:e.status?e.message:'The portal connection failed. Your local draft is unchanged; retry after checking the connection.'});return true;}
   };
   handler.authenticate=authenticate;

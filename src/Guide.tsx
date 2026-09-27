@@ -26,7 +26,7 @@ export default function Guide({ quote, update, exit, finish, connections }: { qu
       const result = await measureRoof(address, new AbortController().signal);
       if (!result.available || !result.roofAreaSqFt) { setMeasureNote(result.reason ?? 'No measurement was returned. Measure manually.'); return; }
       const provenance = `Google aerial imagery${result.imageryDate ? ` (${result.imageryDate})` : ''}${result.imageryQuality ? `, quality ${result.imageryQuality}` : ''}${result.coveragePercent != null ? `, coverage ${result.coveragePercent}% of ground footprint` : ''}`;
-      update({ answers: { ...quote.answers, roofArea: String(result.roofAreaSqFt), measurementSource: 'Google aerial imagery', measurementProvenance: provenance } });
+      update({ answers: { ...quote.answers, roofArea: String(result.roofAreaSqFt), measurementSource: 'Google aerial imagery', measurementProvenance: provenance, ...(result.coveragePercent != null ? { measurementCoverage: String(result.coveragePercent) } : {}) } });
       const details = [
         `Matched address: ${result.formattedAddress || address}.`,
         `Measured sloped roof surface: ${result.roofAreaSqFt.toLocaleString()} sq ft (tilt already applied — do not enter pitch again).`,

@@ -155,7 +155,7 @@ export type VoiceDecision={intent:string;confidence:number;reliable:boolean};
 export type RecapItem={field:string;value:string|string[]};
 export type PendingRoofMeasurement={roofAreaSqFt:number;formattedAddress:string;imageryDate:string|null;imageryQuality:string;coveragePercent:number|null;note:string;provenance:string};
 export function applyConfirmedRoofMeasurement(quote:Quote,pending:PendingRoofMeasurement):Quote{
-  const answers:Answers={...quote.answers,measurementMode:'Measured roof surface area',roofArea:String(pending.roofAreaSqFt),measurementSource:'Google aerial imagery',measurementProvenance:pending.provenance};
+  const answers:Answers={...quote.answers,measurementMode:'Measured roof surface area',roofArea:String(pending.roofAreaSqFt),measurementSource:'Google aerial imagery',measurementProvenance:pending.provenance,...(pending.coveragePercent!=null?{measurementCoverage:String(pending.coveragePercent)}:{})};
   delete answers.pitch;
   return {...quote,answers};
 }

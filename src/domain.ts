@@ -118,6 +118,7 @@ export function issues(quote: Quote): string[] {
   if (quote.type === 'roofing' && answerText(quote.answers, 'measurementSource') === 'Rough estimate') missing.push('Roof measurements are a rough estimate.');
   if (!quote.lines.length) missing.push('Add at least one priced line item.');
   for (const l of quote.lines) {
+    if (l.unit === 'exclusion') continue; // description-only rows carry no price by design
     if (!l.description.trim() || !Number.isFinite(l.quantity) || l.quantity <= 0 || [l.material, l.hours, l.rate].some(n => !Number.isFinite(n) || n < 0) || l.quantity * l.material + l.hours * l.rate <= 0 || (l.hours > 0 && l.rate <= 0)) missing.push(`Check quantity and pricing: ${l.description || 'Unnamed item'}`);
   }
   if (quote.kind === 'fixed' && (!quote.terms.trim() || !quote.exclusions.trim())) missing.push('Fixed quotes need terms and an explicit exclusions statement.');
