@@ -60,6 +60,7 @@ export function createPortalHandler({baseUrl,origins,fetcher=fetch,secureCookies
       if(path==='/api/portal/clients'&&req.method==='POST')target='/clients';
       if(path==='/api/portal/quotes'&&req.method==='POST')target='/quotes';
       if(/^\/api\/portal\/quotes\/[a-f0-9-]{36}$/.test(path)&&req.method==='GET')target=path.replace('/api/portal','');
+      if(/^\/api\/portal\/quotes\/[a-f0-9-]{36}\/share$/.test(path)&&(req.method==='GET'||req.method==='POST'))target=path.replace('/api/portal','');
       if(!target){reply(res,404,{error:'Not found'});return true;}
       const payload=req.method==='POST'?await body(req):undefined;
       const {data}=await api(target,session,req.method,payload);reply(res,200,data);return true;

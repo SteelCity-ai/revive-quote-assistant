@@ -3,7 +3,9 @@ import {newId,derivedTitle} from './domain';
 export type PortalUser={id?:string;userId?:string;displayName:string;role:string;email:string};
 export type PortalStatus={configured:boolean;user:PortalUser|null;ready:boolean;error?:string;portalUrl?:string};
 export type PortalReceipt={id:string;revision:number;approvedAt:string;status:string;projectId:string|null};
-export type PortalSync={clientId:string;customerName:string;approvalId?:string;fingerprint?:string;receipt?:PortalReceipt;error?:string};
+export type PortalLifecycle={id:string;threadId:string;revision:number;approvedAt:string;status:'APPROVED'|'ACCEPTED'|'SUPERSEDED';title?:string;customer?:string;total?:number;clientId?:string;projectId?:string|null;openedAt?:string|null;openedCount?:number;acceptedAt?:string|null;acceptedByName?:string|null;hasShare?:boolean};
+export type PortalShare={shareToken:string;sharePath:string};
+export type PortalSync={clientId:string;customerName:string;approvalId?:string;fingerprint?:string;receipt?:PortalReceipt;error?:string;threadId?:string;status?:PortalLifecycle['status'];openedAt?:string|null;openedCount?:number;acceptedAt?:string|null;acceptedByName?:string|null;hasShare?:boolean;sharePath?:string};
 export async function portalRequest<T>(path:string,body?:unknown):Promise<T>{
   const response=await fetch(`/api/portal/${path}`,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
   const data=await response.json().catch(()=>({error:'The portal connection is unavailable.'}));
@@ -17,3 +19,7 @@ export function prepareApproval(q:Quote){
   const approvalId=q.portal?.fingerprint===fingerprint&&q.portal.approvalId?q.portal.approvalId:newId();
   return {approvalId,fingerprint,body:{clientId:q.portal?.clientId,approvalId,quote:portalSnapshot(q)}};
 }
+// Revision-scoped lifecycle helpers. revisionId is the PortalReceipt.id (portal revision id).
+export const fetchPortalLifecycle=(revisionId:string)=>portalRequest<PortalLifecycle>(`quotes/${revisionId}`);
+export const fetchPortalShare=(revisionId:string)=>portalRequest<PortalShare>(`quotes/${revisionId}/share`);
+export const rotatePortalShare=(revisionId:string)=>portalRequest<PortalShare>(`quotes/${revisionId}/share`,{});
