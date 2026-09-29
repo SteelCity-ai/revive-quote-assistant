@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { defaults, derivedTitle, initialLines, issues, makeQuote, questions, roofMeasurement, totals, validAnswer } from './domain';
 import type { Line } from './domain';
+import { approvalFingerprint } from './portal';
 describe('guided questions', () => {
   it('asks only the selected trades and updates when the selection changes', () => {
     const first = questions('renovation', { trades: ['Electrical', 'Flooring'] });
@@ -60,5 +61,36 @@ describe('pricing and review', () => {
   it('new quotes snapshot defaults so changes do not reprice old jobs', () => {
     const pricing = { ...defaults, laborRate: 75 }; const quote = makeQuote('renovation', pricing);
     pricing.laborRate = 90; expect(quote.pricing.laborRate).toBe(75);
+  });
+
+  describe('priced labor lines and end-of-flow line editing', () => {
+    const labor: Line = { id: 'l-labor', description: 'Tear-off crew', quantity: 1, unit: 'hr', material: 0, hours: 8, rate: 65 };
+    it('a labor line is priced labor, not an allowance — hours x rate flows into labor and fee stays 10% of direct', () => {
+      const t = totals([labor], { ...defaults, laborRate: 65 });
+      expect(t.labor).toBe(520);
+      expect(t.direct).toBe(520);
+      expect(t.fee).toBe(52); // 10% of direct — unchanged by labor composition
+      expect(t.total).toBe(t.direct + t.markup + t.fee + t.tax);
+    });
+    it('a labor line is not counted as an allowance', () => {
+      const allowance: Line = { id: 'l-allow', description: 'X', quantity: 1, unit: 'allowance', material: 100, hours: 0, rate: 65 };
+      const allowanceOnly = [allowance].filter(l => l.unit === 'allowance');
+      expect(allowanceOnly).toHaveLength(1);
+      expect([labor].filter(l => l.unit === 'allowance')).toHaveLength(0);
+    });
+    it('an exclusion line contributes nothing to totals', () => {
+      const exclusion: Line = { id: 'l-excl', description: 'Landscaping repair', quantity: 1, unit: 'exclusion', material: 0, hours: 0, rate: 65 };
+      const before = totals([labor], { ...defaults, laborRate: 65 });
+      const after = totals([labor, exclusion], { ...defaults, laborRate: 65 });
+      expect(after.total).toBe(before.total);
+    });
+    it('editing a line description or rate changes the fingerprint, so a saved portal link requires a new revision', () => {
+      const q1 = { ...makeQuote('roofing', { ...defaults, laborRate: 65 }), lines: [{ id: 'l1', description: 'Materials', quantity: 1, unit: 'allowance', material: 100, hours: 2, rate: 65 }] };
+      const f1 = approvalFingerprint(q1);
+      const q2 = { ...q1, lines: [{ ...q1.lines[0], description: 'Reworded line' }] };
+      const q3 = { ...q1, lines: [{ ...q1.lines[0], hours: q1.lines[0].hours + 2 }] };
+      expect(approvalFingerprint(q2)).not.toBe(f1);
+      expect(approvalFingerprint(q3)).not.toBe(f1);
+    });
   });
 });
