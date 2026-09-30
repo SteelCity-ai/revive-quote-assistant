@@ -22,6 +22,7 @@ export default function VoicePanel({quote,update,research,busy,error,startVoiceQ
   const [muted,setMuted]=useState(false);
   const [typed,setTyped]=useState('');
   const [userName,setUserName]=useState('');
+  const [minimized,setMinimized]=useState(false);
   const refs={pc:useRef<RTCPeerConnection|null>(null),dc:useRef<RTCDataChannel|null>(null),stream:useRef<MediaStream|null>(null),controller:useRef<ReturnType<typeof createVoiceController>|null>(null),quote:useRef(quote),update:useRef(update),research:useRef(research),startVoiceQuote:useRef(startVoiceQuote),busy:useRef(false),pendingRoof:useRef<PendingRoofMeasurement|null>(null)};
   refs.quote.current=quote;refs.update.current=update;refs.research.current=research;refs.startVoiceQuote.current=startVoiceQuote;
   useEffect(()=>{fetch('/api/app/config').then(r=>r.json()).then(c=>{setAvailable(!!c.voiceAvailable);setJevAvailable(!!c.jevAvailable);}).catch(()=>{setAvailable(false);setJevAvailable(false);});},[]);
@@ -114,7 +115,7 @@ export default function VoicePanel({quote,update,research,busy,error,startVoiceQ
       refs.update.current({step:Math.max(0,index)});
       return {message:`Going back to: ${list[index]?.title||field}`,quote:updated};
     },
-    startEstimate:()=>{refs.research.current();return {message:'The researched estimate is being prepared. It usually takes about a minute. I will tell you when it is done.',quote:refs.quote.current};},
+    startEstimate:()=>{setMinimized(true);refs.research.current();return {message:'The researched estimate is being prepared. It usually takes about a minute. I will tell you when it is done.',quote:refs.quote.current};},
     measureRoof,
     confirmRoofMeasurement,
     discardRoofMeasurement,
@@ -175,8 +176,15 @@ export default function VoicePanel({quote,update,research,busy,error,startVoiceQ
   };
   const current=quote?nextQuestion(quote):null;
   const phase=state.phase;
+  useEffect(()=>{ // intake done and estimate underway or ready — get out of the way
+    if(quote&&(quote.stage==='pricing'||quote.stage==='review'))setMinimized(true);
+  },[quote?.stage]);
+  useEffect(()=>{ // session over — close the overlay entirely
+    if(phase==='ended'||phase==='error'||phase==='mic-denied'||phase==='mic-request')setMinimized(false);
+  },[phase]);
   if(available===false)return <p className="voice-unavailable">Voice needs the server AI key; it is not configured yet.</p>;
   if(phase==='idle')return <button className="voice-fab" onClick={()=>void start()}><Mic size={19}/><span>Talk to Revive</span></button>;
+  if(minimized)return <button className="voice-fab voice-resume" aria-label="Resume voice conversation" onClick={()=>setMinimized(false)}><Mic size={17}/><span>Voice active — tap to reopen</span></button>;
   return <div className="voice-overlay" role="dialog" aria-label="Voice conversation with Revive">
     <div className="voice-card">
       <header className="voice-head">
