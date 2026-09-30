@@ -4,6 +4,12 @@ services:
     container_name: revive-quote-assistant
     restart: unless-stopped
     network_mode: host
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4182/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 120s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     env_file:
       - /docker/revive-quote-assistant/shared/.env
     environment:
