@@ -1,5 +1,6 @@
 import type { AIReport } from './ai';
 import type { PortalSync } from './portal';
+import type { ImportedEstimate } from './import';
 export type JobType = 'renovation' | 'roofing' | 'contracting';
 export type Answers = Record<string, string | string[]>;
 export type Line = { id: string; description: string; quantity: number; unit: string; material: number; hours: number; rate: number };
@@ -10,7 +11,7 @@ export type Quote = {
   stage: 'guide' | 'pricing' | 'review'; answers: Answers; lines: Line[]; pricing: Pricing;
   exclusions: string; assumptions: string; terms: string; kind: 'estimate' | 'fixed';
   tier?: TierKey; discountPercent?: number; // chosen Good/Better/Best tier and owner discount — survive retry and ride in the portal snapshot
-  approvedAt?: string; acknowledged: boolean; ai?: AIReport; portal?: PortalSync;
+  approvedAt?: string; acknowledged: boolean; ai?: AIReport; portal?: PortalSync; sourceImport?: ImportedEstimate;
 };
 export const jobNames: Record<JobType, string> = { renovation: 'Commercial renovation', roofing: 'Roofing', contracting: 'General contracting' };
 export const defaults: Pricing = { laborRate: 0, markup: 15, contingency: 0, tax: 0 };

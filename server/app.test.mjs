@@ -36,3 +36,17 @@ it('serves only built assets and rejects secret paths while exposing health and 
     expect((await (await fetch(base+'/healthz')).json()).status).toBe('ok');expect((await (await fetch(base+'/api/app/config')).json()).requiresLogin).toBe(true);
   }finally{await new Promise(r=>server.close(r));await rm(dir,{recursive:true,force:true});}
 });
+it('protects estimate PDFs and email drafts with current administrator roles, origins, type and size limits',async()=>{
+  let role='ADMIN',imports=0;
+  const fetcher=async url=>url.endsWith('/auth/login')?new Response(JSON.stringify({role,userId:'qa-import-admin'}),{headers:{'set-cookie':'revive_session=private-test; Secure; HttpOnly'}}):Response.json({role,userId:'qa-import-admin'});
+  const server=createApp({env:{NODE_ENV:'production',APP_ORIGIN:origin},fetcher,prepare:async()=>{imports++;return {provider:'Symplewyse',total:100};}});
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${server.address().port}`;
+  const upload=(cookie='',from=origin,type='application/pdf',body='%PDF-test')=>fetch(base+'/api/imports/pdf',{method:'POST',headers:{Origin:from,'Content-Type':type,Cookie:cookie},body});
+  try {
+    expect((await upload()).status).toBe(401);expect((await upload('','https://evil.example.com')).status).toBe(403);expect((await fetch(base+'/api/imports/inbox')).status).toBe(401);
+    const login=await fetch(base+'/api/portal/login',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({email:'qa@example.com',password:'test-only'})});const cookie=login.headers.get('set-cookie').split(';')[0];
+    expect((await upload(cookie,origin,'text/plain')).status).toBe(415);expect((await upload(cookie,origin,'application/pdf',Buffer.alloc(10*1024*1024+1))).status).toBe(413);expect(imports).toBe(0);
+    expect((await upload(cookie)).status).toBe(200);expect(imports).toBe(1);expect((await fetch(base+'/api/imports/inbox',{headers:{Cookie:cookie}})).status).toBe(200);
+    role='CLIENT';expect((await upload(cookie)).status).toBe(403);expect((await fetch(base+'/api/imports/inbox',{headers:{Cookie:cookie}})).status).toBe(403);expect(imports).toBe(1);
+  }finally{await new Promise(r=>server.close(r));}
+});
