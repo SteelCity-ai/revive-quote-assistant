@@ -7,15 +7,19 @@ import {createPortalHandler} from './portal.mjs';
 import {createRoofMeasurer} from './roof.mjs';
 import {createVoiceHandler} from './voice.mjs';
 import {createTypeSafeHandler} from './typesafe.mjs';
+import {prepareImport,MAX_PDF_BYTES,importJob} from './import.mjs';
+import {createInboxStore,emailIntakeConfigured,startEmailIntake} from './inbox.mjs';
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.webmanifest':'application/manifest+json','.woff2':'font/woff2','.ico':'image/x-icon'};
 const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
-export function createApp({env=process.env,fetcher=fetch,generate=generateEstimate,staticDir=resolve('dist')}={}){
+export function createApp({env=process.env,fetcher=fetch,generate=generateEstimate,prepare=prepareImport,staticDir=resolve('dist')}={}){
   const production=env.NODE_ENV==='production';
   if(production&&(!env.APP_ORIGIN||new URL(env.APP_ORIGIN).protocol!=='https:'||new URL(env.APP_ORIGIN).origin!==env.APP_ORIGIN))throw new Error('Production requires an exact HTTPS APP_ORIGIN.');
   const hosts=['localhost','127.0.0.1',...Object.values(os.networkInterfaces()).flat().filter(a=>a?.family==='IPv4').map(a=>a.address)];
   const origins=new Set(production?[env.APP_ORIGIN]:hosts.map(host=>`http://${host}:4178`));
   const portal=createPortalHandler({baseUrl:env.PORTAL_API_URL||'https://portal.reviverepairco.com/api/v1',origins,fetcher,secureCookies:production});
   const measureRoof=createRoofMeasurer({fetcher,apiKey:env.GOOGLE_SOLAR_API_KEY||''});
+  const inbox=createInboxStore(env.ESTIMATE_INBOX_DIR);
+  const importWindows=new Map();let importing=false;
   const roofWindows=new Map();
   const voice=createVoiceHandler({env,fetcher,authenticate:portal.authenticate,origins});
   const typesafe=createTypeSafeHandler({env,fetcher,authenticate:portal.authenticate,origins});
@@ -26,7 +30,27 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
     if(production){res.setHeader('Strict-Transport-Security','max-age=31536000');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://api.openai.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");}
     try{
       if(req.url==='/healthz'&&req.method==='GET')return json(res,200,{status:'ok',version:env.RELEASE_SHA||'development'});
-      if(req.url==='/api/app/config'&&req.method==='GET')return json(res,200,{requiresLogin:production,voiceAvailable:!!env.OPENAI_API_KEY,roofMeasurementAvailable:!!env.GOOGLE_SOLAR_API_KEY,jevAvailable:!!env.TYPESAFE_API_KEY});
+    if(req.url==='/api/app/config'&&req.method==='GET')return json(res,200,{requiresLogin:production,voiceAvailable:!!env.OPENAI_API_KEY,roofMeasurementAvailable:!!env.GOOGLE_SOLAR_API_KEY,jevAvailable:!!env.TYPESAFE_API_KEY,estimateImportAvailable:true,emailIntakeAvailable:emailIntakeConfigured(env),estimateMailbox:env.ESTIMATE_IMAP_USER||'mike@reviverepairco.com'});
+    if(req.url==='/api/imports/inbox'&&req.method==='GET'){
+      await portal.authenticate(req);
+      return json(res,200,{drafts:inbox?await inbox.list():[]});
+    }
+    if(req.url==='/api/imports/pdf'&&req.method==='POST'){
+      if(!origins.has(req.headers.origin))return json(res,403,{error:'Request origin is not allowed.'});
+      if(req.headers['content-type']!=='application/pdf')return json(res,415,{error:'Upload an application/pdf file.'});
+      let identity=req.socket.remoteAddress;
+      if(production){const user=await portal.authenticate(req);identity=user.userId||user.id||user.email;if(!identity)return json(res,403,{error:'Your portal identity is incomplete.'});}
+      const now=Date.now();for(const [id,times] of importWindows)if(times.every(t=>now-t>=3600000))importWindows.delete(id);
+      const recent=(importWindows.get(identity)||[]).filter(t=>now-t<3600000);
+      if(importing||recent.length>=30)return json(res,429,{error:'PDF intake is busy or the hourly limit was reached. Try again later.'});
+      if(Number(req.headers['content-length'])>MAX_PDF_BYTES)return json(res,413,{error:'Use a PDF smaller than 10 MB.'});
+      importing=true;importWindows.set(identity,[...recent,now]);
+      try {
+        let bytes=0;const chunks=[];for await(const chunk of req){bytes+=chunk.length;if(bytes>MAX_PDF_BYTES)return json(res,413,{error:'Use a PDF smaller than 10 MB.'});chunks.push(chunk);}
+        let filename='estimate.pdf';try{filename=decodeURIComponent(req.headers['x-estimate-filename']||filename);}catch{}
+        try{return json(res,200,await prepare(Buffer.concat(chunks),{filename,measureRoof}));}catch(e){return json(res,422,{error:e.message});}
+      } finally {importing=false;}
+    }
       if(await portal(req,res))return;
       if(await voice(req,res))return;
       if(await typesafe(req,res))return;
@@ -124,5 +148,19 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
     }catch(error){if(!res.headersSent)json(res,[401,403,429].includes(error.status)?error.status:502,{error:[401,403,429].includes(error.status)?error.message:'The service could not complete the request. Please retry.'});else res.destroy();}
   });
   server.requestTimeout=260000;server.headersTimeout=20000;
+  let stopEmail=()=>{};
+  server.once('listening',()=>{stopEmail=startEmailIntake({env,store:inbox,prepare:(buffer,options)=>prepare(buffer,{...options,measureRoof}),price:async source=>{
+    if(running||!env.OPENAI_API_KEY)throw new Error('Pricing unavailable.');
+    const identity='email-intake';const now=Date.now();const recent=(windows.get(identity)||[]).filter(t=>now-t<3600000);
+    if(recent.length>=12)throw new Error('Email pricing limit reached.');
+    running=true;windows.set(identity,[...recent,now]);const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),240000);
+    try {
+      const input=inputSchema.parse(importJob(source,{laborRate:0,markup:15,contingency:0,tax:0}));
+      const report=await generate(input,{apiKey:env.OPENAI_API_KEY,baseUrl:env.OPENAI_BASE_URL||'http://127.0.0.1:8790/v1',model:env.OPENAI_MODEL||'gpt-4.1',estimateModel:env.OPENAI_ESTIMATE_MODEL||'gpt-5.4-mini-2026-03-17',signal:controller.signal});
+      if(source.type==='roofing')report.questions=[...(report.questions||[]),'Confirm the Google matched address, imagery coverage and included roof sections before approval.'];
+      return report;
+    } finally {clearTimeout(timeout);running=false;}
+  },onError:()=>console.warn('Estimate email intake needs attention; check connection or review failed inbox drafts. No email content or credentials are logged.')});});
+  const close=server.close.bind(server);server.close=(...args)=>{stopEmail();return close(...args);};
   return server;
 }
