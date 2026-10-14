@@ -57,6 +57,8 @@ export function createPortalHandler({baseUrl,origins,fetcher=fetch,secureCookies
       const {data:user}=await api('/me',session);if(user.role!=='ADMIN'){reply(res,403,{error:'Only portal administrators can manage quotes.'});return true;}
       let target;
       if(path==='/api/portal/clients'&&req.method==='GET')target='/clients';
+      if(path==='/api/portal/projects'&&req.method==='GET')target='/projects';
+      if(/^\/api\/portal\/projects\/[a-f0-9-]{36}$/.test(path)&&req.method==='GET')target=path.replace('/api/portal','');
       if(path==='/api/portal/clients'&&req.method==='POST')target='/clients';
       if(path==='/api/portal/quotes'&&req.method==='POST')target='/quotes';
       if(path==='/api/portal/assemblies'&&req.method==='GET')target='/assemblies';
@@ -65,6 +67,10 @@ export function createPortalHandler({baseUrl,origins,fetcher=fetch,secureCookies
       if(/^\/api\/portal\/quotes\/[a-f0-9-]{36}\/share$/.test(path)&&(req.method==='GET'||req.method==='POST'))target=path.replace('/api/portal','');
       if(!target){reply(res,404,{error:'Not found'});return true;}
       const payload=req.method==='POST'?await body(req):undefined;
+      if(target==='/quotes'&&payload?.projectId){
+        const capabilities=(await api('/quotes/capabilities',session)).data;
+        if(capabilities.projectLinking!==true){reply(res,409,{error:'Existing-project quoting is not available in the portal yet. Your draft is unchanged; retry after the portal update.'});return true;}
+      }
       const query=(req.url||'').split('?')[1];
       const {data}=await api(target+(query?`?${query}`:''),session,req.method,payload);reply(res,200,data);return true;
     }catch(e){if(e.status===401&&sid)sessions.delete(sid);reply(res,Number.isInteger(e.status)?e.status:502,{error:e.status?e.message:'The portal connection failed. Your local draft is unchanged; retry after checking the connection.'});return true;}

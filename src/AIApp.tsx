@@ -11,10 +11,29 @@ import type {JobType,Quote} from './domain';
 import {generate,fingerprint} from './ai';
 import {download,load,save} from './storage';
 import VoicePanel from './VoicePanel';
+import {portalRequest,type PortalProject} from './portal';
 export default function AIApp(){
   const [loaded]=useState(load);const [data,setData]=useState(loaded.data);const [storageError,setStorageError]=useState(loaded.error);
   const [activeId,setActiveId]=useState<string|null>(null);const [settings,setSettings]=useState(false);const [busy,setBusy]=useState(false);const [error,setError]=useState('');
   const controller=useRef<AbortController|null>(null);const pristine=useRef(true);
+  const handoff=useRef(false);
+  useEffect(()=>{
+    const projectId=new URLSearchParams(window.location.search).get('projectId');
+    if(handoff.current||!projectId||!/^[a-f0-9-]{36}$/.test(projectId))return;
+    handoff.current=true;
+    void (async()=>{try{
+      const project=await portalRequest<PortalProject>(`projects/${projectId}`);
+      if(!['PLANNED','ACTIVE','ON_HOLD'].includes(project.status))throw new Error('This project cannot receive a new quote.');
+      const clients=await portalRequest<{id:string;companyName:string}[]>('clients');
+      const customer=clients.find(c=>c.id===project.clientId);if(!customer)throw new Error('The project customer is unavailable.');
+      const q=makeQuote('contracting',loaded.data.pricing);
+      const addr=project.siteAddress??{};
+      q.answers={customer:customer.companyName,title:project.name,address:addr.formatted??[addr.line1,addr.city,addr.state,addr.zip].filter(Boolean).join(', '),description:project.description??''};
+      q.portal={clientId:project.clientId,customerName:customer.companyName,projectId:project.id};
+      setData(d=>({...d,quotes:[q,...d.quotes]}));setActiveId(q.id);
+      window.history.replaceState(null,'',window.location.pathname);
+    }catch(e){setStorageError(`Project handoff: ${(e as Error).message}`);}})();
+  },[loaded.data.pricing]);
   useEffect(()=>{if(pristine.current){pristine.current=false;return;}if(loaded.error)return;try{save(data);setStorageError('');}catch{setStorageError('Device storage is unavailable or full. Export a backup before leaving.');}},[data,loaded.error]);
   useEffect(()=>()=>controller.current?.abort(),[]);
   const quote=data.quotes.find(q=>q.id===activeId);

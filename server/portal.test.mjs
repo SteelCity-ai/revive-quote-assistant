@@ -1,6 +1,24 @@
 import {it,expect} from 'vitest';
 import http from 'node:http';
 import {createPortalHandler,portalUrl} from './portal.mjs';
+it('project handoff reads require an admin session and the bridge never allows project writes',async()=>{
+  const id='20000000-0000-4000-8000-000000000002',calls=[];let projectLinking=false;
+  const upstream=async(url,init)=>{calls.push({url:String(url),method:init?.method||'GET'});if(url.endsWith('/auth/login'))return new Response(JSON.stringify({role:'ADMIN'}),{headers:{'Set-Cookie':'revive_session=synthetic; Path=/; HttpOnly'}});if(url.endsWith('/me'))return Response.json({role:'ADMIN'});if(url.endsWith('/quotes/capabilities'))return Response.json({version:1,projectLinking});if(url.endsWith(`/projects/${id}`))return Response.json({id,clientId:'customer',name:'Synthetic project',status:'ACTIVE'});if(url.endsWith('/projects'))return Response.json([{id,clientId:'customer',status:'ACTIVE'}]);return Response.json({});};
+  const handler=createPortalHandler({baseUrl:'https://portal.example/api/v1',origins:new Set(['http://localhost:4178']),fetcher:upstream});const server=http.createServer((req,res)=>void handler(req,res));await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  const base=`http://127.0.0.1:${server.address().port}`;
+  try{
+    expect((await fetch(`${base}/api/portal/projects/${id}`)).status).toBe(401);
+    const login=await fetch(`${base}/api/portal/login`,{method:'POST',headers:{Origin:'http://localhost:4178','Content-Type':'application/json'},body:JSON.stringify({email:'synthetic@example.com',password:'synthetic-only'})});const cookie=login.headers.get('set-cookie').split(';')[0];
+    expect((await fetch(`${base}/api/portal/projects`,{headers:{Cookie:cookie}})).status).toBe(200);
+    expect((await fetch(`${base}/api/portal/projects/${id}`,{headers:{Cookie:cookie}})).status).toBe(200);
+    expect((await fetch(`${base}/api/portal/projects/${id}`,{method:'POST',headers:{Cookie:cookie,Origin:'http://localhost:4178','Content-Type':'application/json'},body:'{}'})).status).toBe(404);
+    expect(calls.some(c=>c.url.endsWith(`/projects/${id}`)&&c.method==='POST')).toBe(false);
+    const save=await fetch(`${base}/api/portal/quotes`,{method:'POST',headers:{Cookie:cookie,Origin:'http://localhost:4178','Content-Type':'application/json'},body:JSON.stringify({projectId:id})});
+    expect(save.status).toBe(409);expect(calls.some(c=>c.url.endsWith('/quotes')&&c.method==='POST')).toBe(false);
+    projectLinking=true;const supported=await fetch(`${base}/api/portal/quotes`,{method:'POST',headers:{Cookie:cookie,Origin:'http://localhost:4178','Content-Type':'application/json'},body:JSON.stringify({projectId:id})});
+    expect(supported.status).toBe(200);expect(calls.some(c=>c.url.endsWith('/quotes')&&c.method==='POST')).toBe(true);
+  }finally{await new Promise(r=>server.close(r));}
+});
 it('keeps portal sessions private, rejects unauthenticated writes and restricts forwarded routes',async()=>{
   const calls=[];const upstream=async(url,init)=>{calls.push({url,init});if(url.endsWith('/auth/login'))return new Response(JSON.stringify({role:'ADMIN',displayName:'QA Admin'}),{headers:{'set-cookie':'revive_session=private-test-token; HttpOnly'}});if(url.endsWith('/me'))return Response.json({role:'ADMIN',displayName:'QA Admin'});if(url.endsWith('/quotes/capabilities'))return Response.json({version:1});return Response.json([]);};
   const handler=createPortalHandler({baseUrl:'https://portal.example/api/v1',origins:new Set(['http://localhost:4178','http://192.168.1.20:4178']),fetcher:upstream});

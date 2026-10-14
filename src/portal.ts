@@ -5,7 +5,8 @@ export type PortalStatus={configured:boolean;user:PortalUser|null;ready:boolean;
 export type PortalReceipt={id:string;revision:number;approvedAt:string;status:string;projectId:string|null};
 export type PortalLifecycle={id:string;threadId:string;revision:number;approvedAt:string;status:'APPROVED'|'ACCEPTED'|'SUPERSEDED';title?:string;customer?:string;total?:number;clientId?:string;projectId?:string|null;openedAt?:string|null;openedCount?:number;acceptedAt?:string|null;acceptedByName?:string|null;hasShare?:boolean};
 export type PortalShare={shareToken:string;sharePath:string};
-export type PortalSync={clientId:string;customerName:string;approvalId?:string;fingerprint?:string;receipt?:PortalReceipt;error?:string;threadId?:string;status?:PortalLifecycle['status'];openedAt?:string|null;openedCount?:number;acceptedAt?:string|null;acceptedByName?:string|null;hasShare?:boolean;sharePath?:string};
+export type PortalProject={id:string;clientId:string;name:string;description?:string;status:string;siteAddress?:Record<string,string>};
+export type PortalSync={clientId:string;customerName:string;projectId?:string;approvalId?:string;fingerprint?:string;receipt?:PortalReceipt;error?:string;threadId?:string;status?:PortalLifecycle['status'];openedAt?:string|null;openedCount?:number;acceptedAt?:string|null;acceptedByName?:string|null;hasShare?:boolean;sharePath?:string};
 export async function portalRequest<T>(path:string,body?:unknown):Promise<T>{
   const response=await fetch(`/api/portal/${path}`,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
   const data=await response.json().catch(()=>({error:'The portal connection is unavailable.'}));
@@ -13,11 +14,11 @@ export async function portalRequest<T>(path:string,body?:unknown):Promise<T>{
   if(!response.ok)throw new Error(data.error||'The portal could not save this quote.');return data;
 }
 export function portalSnapshot(q:Quote){const answers=q.answers.title?q.answers:{...q.answers,title:derivedTitle(q)};return {id:q.id,type:q.type,kind:q.kind,answers,lines:q.lines,pricing:q.pricing,assumptions:q.assumptions,exclusions:q.exclusions,terms:q.terms,acknowledged:true as const,...(q.tier?{tier:q.tier}:{}),...(q.discountPercent?{discountPercent:q.discountPercent}:{}),...(q.ai?{ai:q.ai}:{})};}
-export const approvalFingerprint=(q:Quote)=>JSON.stringify({clientId:q.portal?.clientId,quote:portalSnapshot(q)});
+export const approvalFingerprint=(q:Quote)=>JSON.stringify({clientId:q.portal?.clientId,...(q.portal?.projectId?{projectId:q.portal.projectId}:{}),quote:portalSnapshot(q)});
 export function prepareApproval(q:Quote){
   const fingerprint=approvalFingerprint(q);
   const approvalId=q.portal?.fingerprint===fingerprint&&q.portal.approvalId?q.portal.approvalId:newId();
-  return {approvalId,fingerprint,body:{clientId:q.portal?.clientId,approvalId,quote:portalSnapshot(q)}};
+  return {approvalId,fingerprint,body:{clientId:q.portal?.clientId,approvalId,...(q.portal?.projectId?{projectId:q.portal.projectId}:{}),quote:portalSnapshot(q)}};
 }
 // Revision-scoped lifecycle helpers. revisionId is the PortalReceipt.id (portal revision id).
 export const fetchPortalLifecycle=(revisionId:string)=>portalRequest<PortalLifecycle>(`quotes/${revisionId}`);
