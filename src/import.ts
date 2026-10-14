@@ -1,6 +1,6 @@
 import {makeQuote} from './domain';
 import type {JobType,Pricing,Quote} from './domain';
-import {fingerprint,projectArea} from './ai';
+import {fingerprint,projectArea,estimateReference} from './ai';
 import type {AIReport,RoofMeasure} from './ai';
 export type ImportedEstimate={id:string;provider:'Symplewyse';filename:string;estimateNumber:string;issuedAt:string;total:number|null;currency:'USD';customer:string;contact:string;address:string;type:JobType;roofWork:string;roofSystem:string;workArea:number|null;scope:string;sourceTerms?:string;warnings:string[];importedAt:string;roofMeasurement:RoofMeasure|null;status?:string;error?:string;report?:AIReport;reportPricing?:Pricing;};
 export function pricingScope(scope:string){return scope.replace(/(?:USD\s*|\$)\s*\d[\d,]*(?:\.\d{1,2})?/gi,'[imported price omitted]').split('\n').filter(line=>!/^\s*(?:subtotal|total|tax|discount|unit price|amount|price|budget|estimate price)\b/i.test(line)).join('\n').trim();}
@@ -17,7 +17,7 @@ export function quoteFromImport(source:ImportedEstimate,pricing:Pricing,roofArea
 }
 export function applyImportedReport(quote:Quote,report:AIReport):Quote {
   const lines=report.items.map((item,i)=>({id:`ai-${quote.id}-${i}`,description:item.description,quantity:item.quantity,unit:item.unit,material:item.unitCost,hours:item.laborHours,rate:item.hourlyRate}));
-  return {...quote,stage:'pricing',lines,assumptions:report.assumptions.join('\n'),exclusions:report.exclusions.join('\n'),ai:{...report,area:projectArea(quote),fingerprint:fingerprint(quote),lineIds:lines.map(l=>l.id),resolvedQuestions:[]}};
+  return {...quote,stage:'pricing',lines,assumptions:report.assumptions.join('\n'),exclusions:report.exclusions.join('\n'),ai:{...report,importedEstimate:estimateReference(quote.sourceImport),area:projectArea(quote),fingerprint:fingerprint(quote),lineIds:lines.map(l=>l.id),resolvedQuestions:[]}};
 }
 export async function uploadEstimate(file:File,signal:AbortSignal):Promise<ImportedEstimate>{
   if(file.size>10*1024*1024)throw new Error('Use a PDF smaller than 10 MB.');

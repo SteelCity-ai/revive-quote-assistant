@@ -157,6 +157,7 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
     try {
       const input=inputSchema.parse(importJob(source,{laborRate:0,markup:15,contingency:0,tax:0}));
       const report=await generate(input,{apiKey:env.OPENAI_API_KEY,baseUrl:env.OPENAI_BASE_URL||'http://127.0.0.1:8790/v1',model:env.OPENAI_MODEL||'gpt-4.1',estimateModel:env.OPENAI_ESTIMATE_MODEL||'gpt-5.4-mini-2026-03-17',signal:controller.signal});
+      report.importedEstimate={provider:source.provider,estimateNumber:source.estimateNumber,issuedAt:source.issuedAt,total:source.total,currency:source.currency,filename:source.filename};
       if(source.type==='roofing')report.questions=[...(report.questions||[]),'Confirm the Google matched address, imagery coverage and included roof sections before approval.'];
       return report;
     } finally {clearTimeout(timeout);running=false;}
