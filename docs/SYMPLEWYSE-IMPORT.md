@@ -10,12 +10,16 @@ PDF uploads require the current portal ADMIN role in production, the allowed ori
 
 ## Incoming email
 
-Target mailbox: **mike@reviverepairco.com**. The implementation is disabled until the mail provider and credentials are configured. Server-only variables are listed in `.env.example`:
+Target mailbox: **mike@reviverepairco.com**, hosted on **Google Workspace**. Configure Symplewyse to send PDFs to this mailbox. The implementation is disabled until mailbox authorization and the verified sender are configured. Server-only variables are listed in `.env.example`:
 
-- `ESTIMATE_IMAP_HOST`, `ESTIMATE_IMAP_USER`, `ESTIMATE_IMAP_PASSWORD`: provider-supported IMAP access over verified TLS on port 993.
+- `ESTIMATE_MAIL_PROVIDER=google-workspace`, `ESTIMATE_IMAP_HOST=imap.gmail.com`, `ESTIMATE_IMAP_USER=mike@reviverepairco.com`: Google IMAP over verified TLS on port 993. The Google provider defaults to this host when the host is omitted.
+- Google OAuth: `ESTIMATE_GOOGLE_CLIENT_ID`, `ESTIMATE_GOOGLE_CLIENT_SECRET`, `ESTIMATE_GOOGLE_REFRESH_TOKEN`. All three are required. The server refreshes short-lived access tokens privately and supplies them to IMAP via XOAUTH2. Google tokens cannot be sent to a different configured IMAP host. Partial OAuth configuration disables intake rather than falling back to password authentication.
+- Alternative: `ESTIMATE_IMAP_PASSWORD` can hold a Google app password if two-step verification and Workspace administrator policy permit it. Never use the ordinary Google account password.
 - `ESTIMATE_IMAP_FOLDER`: defaults to `INBOX`; a dedicated estimates folder is preferable for a mixed-use mailbox.
 - `ESTIMATE_ALLOWED_SENDERS`: exact verified sender addresses, comma separated.
 - `ESTIMATE_INBOX_DIR`: private, persistent directory. Compose uses `/data/estimate-inbox`.
+
+The receiving address and allowed sender are separate settings. Inspect the real email's From address before enabling its allowlist entry; Reply-To or a branded sender name is not the sender address. If Symplewyse is configured to send from this Workspace address, verify that it actually does so before allowing it. Do not enable all mail from the mailbox or use a wildcard sender.
 
 The server polls every 60 seconds, checks sender/recipient and size, and processes up to five PDF attachments per message. Initial connection (or changed UID validity) starts with new messages; it does not import historical mailbox contents. A durable cursor and PDF SHA-256 deduplicate deliveries across restarts. Changed PDFs create a new imported draft, even when the estimate number matches. The worker does not mark messages read, delete them, send email, approve quotes, accept a customer quote or create a portal project.
 
@@ -25,7 +29,9 @@ Signed-in administrators use **Check received estimates** on the import screen t
 
 ## Release and activation
 
-Create `/docker/revive-quote-assistant/estimate-inbox` privately with ownership matching the container's node user (UID/GID 1000) before deployment; retain it and its backups through releases. Populate mailbox credentials in the root-only shared environment file through a private channel. Confirm the real provider and verified sender address before enabling the worker. Password-authenticated IMAP must be supported by that provider; OAuth-only tenants need an OAuth connection adapter rather than a regular account password.
+Create `/docker/revive-quote-assistant/estimate-inbox` privately with ownership matching the container's node user (UID/GID 1000) before deployment; retain it and its backups through releases. Populate mailbox authorization in the root-only shared environment file through a private channel, not chat or Git. Confirm the verified sender before enabling the worker. For OAuth, use a Google Cloud application approved for this Workspace organization and authorize offline access to the mailbox. Google IMAP OAuth requires the `https://mail.google.com/` scope; although that authorization covers full mail access, this worker only reads incoming messages and never sends or modifies mail. The configured Gmail connection in a desktop connector does not automatically authorize the deployed server. Google authorization has not been completed by this change.
+
+Official protocol reference: [Google Gmail XOAUTH2](https://developers.google.com/workspace/gmail/imap/xoauth2-protocol). For a future connection limited to the Gmail API's read-only scope, replace IMAP with a Gmail API adapter; an IMAP token cannot use that narrower scope.
 
 Run the repository tests/build/production dependency audit and normal staging checks, including anonymous PDF/inbox denial and an authenticated synthetic PDF import. Retain the prior application image. No portal database migration is required. For activation, send one explicitly authorized test estimate to the mailbox, verify one persistent draft and independent price, and redeliver the same PDF to verify deduplication. Google/provider tests and actual email receipt are separate from mocked regression coverage.
 

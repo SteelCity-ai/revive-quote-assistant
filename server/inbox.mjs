@@ -4,6 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {ImapFlow} from 'imapflow';
 import {simpleParser} from 'mailparser';
 import {MAX_PDF_BYTES} from './import.mjs';
+import {createMailAuth,mailConnection} from './mail-auth.mjs';
 const safeId=id=>/^[a-f0-9]{64}$/.test(id);
 export function createInboxStore(dir) {
   if(!dir)return null;
@@ -17,7 +18,7 @@ export function createInboxStore(dir) {
   };
 }
 export function emailIntakeConfigured(env) {
-  return !!(env.ESTIMATE_INBOX_DIR&&env.ESTIMATE_IMAP_HOST&&env.ESTIMATE_IMAP_USER&&env.ESTIMATE_IMAP_PASSWORD&&env.ESTIMATE_ALLOWED_SENDERS);
+  return !!(env.ESTIMATE_INBOX_DIR&&mailConnection(env).valid&&env.ESTIMATE_ALLOWED_SENDERS?.split(',').some(s=>s.trim()));
 }
 export function acceptedEmail(parsed,{mailbox,senders}) {
   const recipients=[parsed.to,parsed.cc].flatMap(a=>a?.value||[]).map(v=>v.address?.toLowerCase());
@@ -28,12 +29,14 @@ export function acceptedEmail(parsed,{mailbox,senders}) {
 export function startEmailIntake({env,store,prepare,price,onError=()=>{},clientFactory=options=>new ImapFlow(options),startImmediately=true}) {
   if(!emailIntakeConfigured(env)||!store)return ()=>{};
   const senders=env.ESTIMATE_ALLOWED_SENDERS.split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
+  const connection=mailConnection(env);const authenticate=createMailAuth(env);
   let active=false,stopped=false,client;
   const poll=async()=>{
     if(active||stopped)return;active=true;
-    client=clientFactory({host:env.ESTIMATE_IMAP_HOST,port:993,secure:true,auth:{user:env.ESTIMATE_IMAP_USER,pass:env.ESTIMATE_IMAP_PASSWORD},logger:false,socketTimeout:30000,connectionTimeout:20000});
-    client.on('error',()=>onError());
     try {
+      const auth=await authenticate();if(stopped)return;
+      client=clientFactory({host:connection.host,port:993,secure:true,auth,logger:false,socketTimeout:30000,connectionTimeout:20000});
+      client.on('error',()=>onError());
       await client.connect();const lock=await client.getMailboxLock(env.ESTIMATE_IMAP_FOLDER||'INBOX');
       try {
         const validity=String(client.mailbox.uidValidity);let cursor=await store.cursor();
@@ -67,7 +70,7 @@ export function startEmailIntake({env,store,prepare,price,onError=()=>{},clientF
           cursor={validity,uid:message.uid};await store.saveCursor(cursor);
         }
       } finally {lock.release();}
-    } catch {onError();} finally {await client.logout().catch(()=>{});client=null;active=false;}
+    } catch {onError();} finally {if(client)await client.logout().catch(()=>{});client=null;active=false;}
   };
   const timer=setInterval(()=>void poll(),60000);timer.unref();if(startImmediately)void poll();
   return Object.assign(()=>{stopped=true;clearInterval(timer);client?.close();},{poll});
