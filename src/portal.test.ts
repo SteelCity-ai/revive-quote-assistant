@@ -12,6 +12,12 @@ it('does not upload local navigation state or sync receipts as quote content',()
   const q=makeQuote('roofing',defaults);q.portal={clientId:'customer',customerName:'Customer'};
   expect(portalSnapshot(q)).not.toHaveProperty('portal');expect(portalSnapshot(q)).not.toHaveProperty('step');
 });
+it('includes an existing project in the approval and changes retry identity when its link changes',()=>{
+  const q=makeQuote('contracting',defaults);q.portal={clientId:'customer',customerName:'Customer',projectId:'project-one'};
+  const first=prepareApproval(q);expect(first.body.projectId).toBe('project-one');q.portal={...q.portal,...first};
+  expect(prepareApproval(q).approvalId).toBe(first.approvalId);
+  q.portal.projectId='project-two';expect(prepareApproval(q).approvalId).not.toBe(first.approvalId);
+});
 it('rides the chosen tier and discount in the snapshot, and moves the fingerprint when either changes',()=>{
   const q=makeQuote('roofing',defaults);q.portal={clientId:'customer',customerName:'Customer'};
   expect(portalSnapshot(q)).not.toHaveProperty('tier'); // no tier chosen yet — nothing invented
