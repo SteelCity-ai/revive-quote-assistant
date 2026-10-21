@@ -196,8 +196,9 @@ export function parseDraftImport(text: string, existing: Quote[]): ImportPreview
   const version = data.version;
   if (version !== 1) fail(`Unsupported import version: ${JSON.stringify(version ?? null)}. Only version 1 exports are supported.`);
 
+  if ('quote' in data && 'quotes' in data) fail('Ambiguous import format: choose quote or quotes, not both.');
   const warnings: string[] = [];
-  if ('calculatedTotals' in data) warnings.push('Imported calculated totals were ignored; totals are recomputed from line items and pricing.');
+  if ('calculatedTotals' in data) warnings.push('Imported calculatedTotals were ignored; totals are recomputed from line items and pricing.');
 
   let imported: Quote[];
   let format: string;

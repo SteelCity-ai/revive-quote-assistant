@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { Quote } from './domain';
 import { commitDraftImport, parseDraftImport } from './import';
 
@@ -82,7 +82,7 @@ describe('parseDraftImport — malformed and hostile input', () => {
   });
 
   it('rejects nonfinite and negative money, quantities, discount', () => {
-    expect(() => parseDraftImport(reviewExport({ lines: [validQuote().lines[0], { id: 'l', description: 'x', quantity: -1, unit: 'u', material: 0, hours: 0, rate: 0 }] }), [])).toThrow(/quantity/);
+    expect(() => parseDraftImport(reviewExport({ lines: [{ id: 'l', description: 'x', quantity: -1, unit: 'u', material: 0, hours: 0, rate: 0 }] }), [])).toThrow(/quantity/);
     expect(() => parseDraftImport(reviewExport({ pricing: { laborRate: NaN, markup: 15, contingency: 0, tax: 0 } }), [])).toThrow(/pricing/);
     expect(() => parseDraftImport(reviewExport({ discountPercent: 150 }), [])).toThrow(/discount/);
     expect(() => parseDraftImport(reviewExport({ lines: [{ id: 'l', description: 'x', quantity: Infinity, unit: 'u', material: 0, hours: 0, rate: 0 }] }), [])).toThrow(/quantity/);
@@ -90,12 +90,12 @@ describe('parseDraftImport — malformed and hostile input', () => {
   });
 
   it('rejects invalid enums and structure', () => {
-    expect(() => parseDraftImport(reviewExport({ type: 'demolition' }), [])).toThrow(/unsupported/i);
+    expect(() => parseDraftImport(reviewExport({ type: 'demolition' }), [])).toThrow(/not a supported value/i);
     expect(() => parseDraftImport(reviewExport({ kind: 'proposal' }), [])).toThrow(/kind/);
     expect(() => parseDraftImport(reviewExport({ answers: { a: 5 } }), [])).toThrow(/answer/);
     expect(() => parseDraftImport(reviewExport({ lines: 'nope' }), [])).toThrow(/lines/);
     expect(() => parseDraftImport(JSON.stringify({ version: 1, quote: validQuote(), quotes: [validQuote()] }), [])).toThrow(/Ambiguous/);
-    expect(() => parseDraftImport(JSON.stringify({ version: 1 }), [])).toThrow(/Unrecognized/);
+    expect(() => parseDraftImport(JSON.stringify({ version: 1 }), [])).toThrow(/neither a quote export nor a settings backup/i);
   });
 
   it('enforces payload, quote count, and line-count bounds', () => {
@@ -128,7 +128,7 @@ describe('duplicate detection', () => {
     const q = changed.quote as Record<string, unknown>;
     q.id = 'other-id'; q.createdAt = '2020-01-01'; q.updatedAt = '2020-01-01'; q.approvedAt = '2020-01-01';
     expect(parseDraftImport(JSON.stringify(changed), existing).duplicates).toEqual([0]);
-    const different = JSON.parse(reviewExport({ answers: { customer: 'Different' } }));
+    const different = JSON.parse(reviewExport({ id: 'different-quote', answers: { customer: 'Different' } }));
     expect(parseDraftImport(JSON.stringify(different), existing).duplicates).toEqual([]);
   });
 });
@@ -150,7 +150,7 @@ describe('commitDraftImport', () => {
   it('creates fresh ids, review stage, unapproved, and writes storage once', () => {
     const existing = existingQuotes();
     const preview = parseDraftImport(reviewExport(), existing);
-    const current = { version: 1, quotes: existing, pricing: { laborRate: 42, markup: 10, contingency: 2, tax: 5 } };
+    const current = { version: 1 as const, quotes: existing, pricing: { laborRate: 42, markup: 10, contingency: 2, tax: 5 } };
     const next = commitDraftImport(preview, current, { allowDuplicates: true }, fakeStorage);
     expect(next.quotes).toHaveLength(existing.length + 1);
     const added = next.quotes[next.quotes.length - 1];
@@ -178,7 +178,7 @@ describe('commitDraftImport', () => {
   it('leaves storage unchanged when setItem fails (atomicity)', () => {
     const failing: Pick<Storage, 'setItem'> = { setItem: () => { throw new Error('quota'); } };
     const preview = parseDraftImport(backupExport(), []);
-    const current = { version: 1, quotes: [], pricing: { laborRate: 1, markup: 1, contingency: 1, tax: 1 } };
+    const current = { version: 1 as const, quotes: [], pricing: { laborRate: 1, markup: 1, contingency: 1, tax: 1 } };
     expect(() => commitDraftImport(preview, current, { allowDuplicates: false }, failing)).toThrow(/quota|unchanged/i);
   });
 
