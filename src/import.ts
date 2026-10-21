@@ -1,6 +1,7 @@
 import { newId } from './domain';
 import type { Quote, Pricing, Line, JobType, Answers, TierKey } from './domain';
 import type { SavedState } from './storage';
+import { computeMargin } from './margin';
 
 // Strict draft import: parse/validate only at parse time, write exactly once at commit.
 // Never trusts imported totals or execution metadata; recomputes through existing math.
@@ -64,12 +65,32 @@ function safeString(value: unknown, label: string, max: number, allowEmpty = tru
   return value;
 }
 
+// Real app export timestamps are ISO strings from Date#toISOString. JS silently
+// normalizes Feb 31 into March 3, so we verify the parsed value round-trips to
+// a real calendar day; legitimate ISO formats are canonicalized to UTC.
+function safeTimestamp(value: unknown, label: string): string {
+  const text = safeString(value, label, 40, false);
+  // Validate the source calendar day separately: Date.parse normalizes Feb 31.
+  // Explicit-zone ISO timestamps (with or without milliseconds) and date-only
+  // values are accepted and canonicalized to UTC; local-time ambiguity is not.
+  const match = /^(\d{4}-\d{2}-\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?(Z|[+-]\d{2}:\d{2}))?$/.exec(text);
+  if (!match || Number(match[2] ?? 0) > 23 || Number(match[3] ?? 0) > 59 || Number(match[4] ?? 0) > 59) fail(`${label} is not a valid date`);
+  const day = new Date(`${match[1]}T00:00:00Z`);
+  if (!Number.isFinite(day.getTime()) || day.toISOString().slice(0, 10) !== match[1]) fail(`${label} is not a valid calendar date`);
+  const ms = Date.parse(text);
+  if (!Number.isFinite(ms)) fail(`${label} is not a valid date`);
+  return new Date(ms).toISOString();
+}
+
 function safeAnswers(value: unknown, label: string): Answers {
   if (!isRecord(value)) fail(`${label} must be an object`);
   const keys = Object.keys(value);
   if (keys.length > MAX_ANSWER_ENTRIES) fail(`${label} exceeds ${MAX_ANSWER_ENTRIES} entries`);
   const answers: Answers = {};
   for (const key of keys) {
+    // Reject prototype-pollution keys before any assignment: a hostile export can
+    // smuggle these names as own JSON properties and they must never reach a quote.
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') fail(`${label} contains a reserved answer key: ${key}`);
     if (!key || key.length > MAX_ANSWER_KEY_CHARS) fail(`${label} has an invalid key`);
     const raw = value[key];
     if (typeof raw === 'string') {
@@ -132,8 +153,8 @@ function candidate(raw: unknown, label: string): Quote {
   if (!isRecord(pricingRaw)) fail(`${label}.pricing must be an object`);
   const step = raw.step ?? 0;
   if (!isFiniteNumber(step) || step < 0 || !Number.isInteger(step)) fail(`${label}.step must be a non-negative integer`);
-  const createdAt = safeString(raw.createdAt ?? new Date().toISOString(), `${label}.createdAt`, 40, false);
-  const updatedAt = safeString(raw.updatedAt ?? createdAt, `${label}.updatedAt`, 40, false);
+  const createdAt = safeTimestamp(raw.createdAt ?? new Date().toISOString(), `${label}.createdAt`);
+  const updatedAt = safeTimestamp(raw.updatedAt ?? createdAt, `${label}.updatedAt`);
   return {
     id: safeString(raw.id, `${label}.id`, 120, false),
     type,
@@ -159,12 +180,36 @@ function candidate(raw: unknown, label: string): Quote {
   };
 }
 
-// Canonical duplicate fingerprint: same job content excluding ids, timestamps and approval metadata.
+// Money bound beyond raw unit cost: every line product (quantity*material,
+// hours*rate) and the full quote aggregate (direct, contingency, markup, tax,
+// fee, discount, total) must stay finite, non-negative and within MAX_MONEY,
+// using the app's actual calculator so import math matches Review exactly.
+function validateQuoteMoneyBounds(quote: Quote, label: string): void {
+  for (const [index, line] of quote.lines.entries()) {
+    const materials = line.quantity * line.material;
+    if (!Number.isFinite(materials) || materials > MAX_MONEY) fail(`${label}.lines[${index}] material amount exceeds the maximum supported money amount`);
+    const labor = line.hours * line.rate;
+    if (!Number.isFinite(labor) || labor > MAX_MONEY) fail(`${label}.lines[${index}] labor amount exceeds the maximum supported money amount`);
+  }
+  const totals = computeMargin(quote.lines, quote.pricing, 10, quote.discountPercent ?? 0);
+  const aggregates = [totals.internalCost, totals.preDiscountTotal, totals.customerPrice, totals.discountDollars, totals.markup, totals.marginDollars];
+  for (const value of aggregates) {
+    if (!Number.isFinite(value)) fail(`${label} pricing aggregate is not a finite number`);
+    if (value < 0) fail(`${label} pricing aggregate must not be negative`);
+    if (value > MAX_MONEY) fail(`${label} pricing aggregate exceeds the maximum supported money amount`);
+  }
+}
+
+// Canonical duplicate fingerprint: same job content excluding ids, timestamps and
+// approval metadata. Answer keys are sorted so the same answers supplied in a
+// different insertion order detect as duplicates; array order is preserved.
 function fingerprint(quote: Quote): string {
+  const sortedAnswers: Record<string, string | string[]> = {};
+  for (const key of Object.keys(quote.answers).sort()) sortedAnswers[key] = quote.answers[key];
   return JSON.stringify({
     type: quote.type,
     kind: quote.kind,
-    answers: quote.answers,
+    answers: sortedAnswers,
     lines: quote.lines.map(line => ({ description: line.description, quantity: line.quantity, unit: line.unit, material: line.material, hours: line.hours, rate: line.rate })),
     pricing: quote.pricing,
     tier: quote.tier,
@@ -223,6 +268,10 @@ export function parseDraftImport(text: string, existing: Quote[]): ImportPreview
     imported = data.quotes.map((raw, index) => candidate(raw, `quotes[${index}]`));
   } else {
     fail('Import payload is neither a quote export nor a settings backup');
+  }
+
+  for (const [index, quote] of imported.entries()) {
+    validateQuoteMoneyBounds(quote, format === 'quote-export-v1' ? 'quote' : `quotes[${index}]`);
   }
 
   // Duplicate detection: same id OR same content, against existing quotes and within the payload.
