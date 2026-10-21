@@ -78,7 +78,7 @@ describe('parseDraftImport — malformed and hostile input', () => {
     expect(() => parseDraftImport('[]', [])).toThrow(/object/);
     expect(() => parseDraftImport('null', [])).toThrow(/object/);
     expect(() => parseDraftImport(JSON.stringify({ version: 2, quotes: [] }), [])).toThrow(/version/i);
-    expect(() => parseDraftImport('', [])).toThrow(/Nothing to import/);
+    expect(() => parseDraftImport('', [])).toThrow(/empty/i);
   });
 
   it('rejects nonfinite and negative money, quantities, discount', () => {
@@ -90,7 +90,7 @@ describe('parseDraftImport — malformed and hostile input', () => {
   });
 
   it('rejects invalid enums and structure', () => {
-    expect(() => parseDraftImport(reviewExport({ type: 'demolition' }), [])).toThrow(/job type/);
+    expect(() => parseDraftImport(reviewExport({ type: 'demolition' }), [])).toThrow(/unsupported/i);
     expect(() => parseDraftImport(reviewExport({ kind: 'proposal' }), [])).toThrow(/kind/);
     expect(() => parseDraftImport(reviewExport({ answers: { a: 5 } }), [])).toThrow(/answer/);
     expect(() => parseDraftImport(reviewExport({ lines: 'nope' }), [])).toThrow(/lines/);
@@ -129,7 +129,7 @@ describe('duplicate detection', () => {
     q.id = 'other-id'; q.createdAt = '2020-01-01'; q.updatedAt = '2020-01-01'; q.approvedAt = '2020-01-01';
     expect(parseDraftImport(JSON.stringify(changed), existing).duplicates).toEqual([0]);
     const different = JSON.parse(reviewExport({ answers: { customer: 'Different' } }));
-    expect(parseDraftImport(different, existing).duplicates).toEqual([]);
+    expect(parseDraftImport(JSON.stringify(different), existing).duplicates).toEqual([]);
   });
 });
 

@@ -28,6 +28,10 @@ class ImportValidationError extends Error {}
 
 function fail(message: string): never { throw new ImportValidationError(message); }
 
+function defWhenUndefined(value: unknown, fallback: number): unknown {
+  return value === undefined ? fallback : value;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -135,15 +139,16 @@ function candidate(raw: unknown, label: string): Quote {
     type,
     createdAt,
     updatedAt,
+    acknowledged: false,
     step,
     stage,
     answers: safeAnswers(raw.answers ?? {}, `${label}.answers`),
     lines: safeLines(raw.lines ?? [], `${label}.lines`),
     pricing: {
-      laborRate: safeMoney(pricingRaw.laborRate ?? 0, `${label}.pricing.laborRate`),
-      markup: safeNonNegative(pricingRaw.markup ?? 15, `${label}.pricing.markup`),
-      contingency: safeNonNegative(pricingRaw.contingency ?? 0, `${label}.pricing.contingency`),
-      tax: safeNonNegative(pricingRaw.tax ?? 0, `${label}.pricing.tax`),
+      laborRate: safeMoney(defWhenUndefined(pricingRaw.laborRate, 0), `${label}.pricing.laborRate`),
+      markup: safeNonNegative(defWhenUndefined(pricingRaw.markup, 15), `${label}.pricing.markup`),
+      contingency: safeNonNegative(defWhenUndefined(pricingRaw.contingency, 0), `${label}.pricing.contingency`),
+      tax: safeNonNegative(defWhenUndefined(pricingRaw.tax, 0), `${label}.pricing.tax`),
     },
     exclusions: safeString(raw.exclusions ?? '', `${label}.exclusions`, MAX_TEXT_CHARS),
     assumptions: safeString(raw.assumptions ?? '', `${label}.assumptions`, MAX_TEXT_CHARS),
@@ -209,10 +214,10 @@ export function parseDraftImport(text: string, existing: Quote[]): ImportPreview
     if (data.quotes.length > MAX_QUOTES) fail(`Import payload exceeds ${MAX_QUOTES} quotes`);
     if (!isRecord(data.pricing)) fail('pricing must be an object');
     currentPricing = {
-      laborRate: safeMoney(data.pricing.laborRate ?? 0, 'pricing.laborRate'),
-      markup: safeNonNegative(data.pricing.markup ?? 15, 'pricing.markup'),
-      contingency: safeNonNegative(data.pricing.contingency ?? 0, 'pricing.contingency'),
-      tax: safeNonNegative(data.pricing.tax ?? 0, 'pricing.tax'),
+      laborRate: safeMoney(defWhenUndefined(data.pricing.laborRate, 0), 'pricing.laborRate'),
+      markup: safeNonNegative(defWhenUndefined(data.pricing.markup, 15), 'pricing.markup'),
+      contingency: safeNonNegative(defWhenUndefined(data.pricing.contingency, 0), 'pricing.contingency'),
+      tax: safeNonNegative(defWhenUndefined(data.pricing.tax, 0), 'pricing.tax'),
     };
     imported = data.quotes.map((raw, index) => candidate(raw, `quotes[${index}]`));
   } else {
