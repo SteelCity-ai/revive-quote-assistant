@@ -1,6 +1,6 @@
 import type { Quote } from './domain';
-import { totals } from './domain';
 import { newId } from './domain';
+import { discountedTotals } from './margin';
 
 /**
  * Draft version history (Q1).
@@ -64,19 +64,34 @@ export function restoreSnapshot(snapshot: QuoteSnapshot): Quote {
 
 export type LineDiff = {
   description: string;
+  /** Present when a stable line kept its id but its description was edited. */
+  fromDescription?: string;
   kind: 'added' | 'removed' | 'changed';
   from?: { quantity: number; unit: string; material: number; hours: number; rate: number };
   to?: { quantity: number; unit: string; material: number; hours: number; rate: number };
 };
 
+export type ValueDiff = { field: string; from: string; to: string };
+
 export type QuoteDiff = {
   lineChanges: LineDiff[];
   scopeChanges: { field: 'exclusions' | 'assumptions' | 'terms'; from: string; to: string }[];
-  pricingChanges: { field: keyof Quote['pricing']; from: number; to: number }[];
+  /** Job answers that changed (customer-visible scope detail). */
+  answerChanges: ValueDiff[];
+  /** Quote-level shape changes: job type, quote kind, guide/review stage. */
+  quoteChanges: { field: 'type' | 'kind' | 'stage'; from: string; to: string }[];
+  /** Pricing settings incl. tier and owner discount percent. */
+  pricingChanges: { field: string; from: number | string; to: number | string }[];
+  /** Recomputed discounted customer totals (margin.ts semantics). */
   totalChanges: { field: string; from: number; to: number }[];
 };
 
-const lineKey = (l: { description: string }) => l.description.trim().toLowerCase();
+/** Match lines by stable id; fall back to description only for legacy rows without an id. */
+const lineKey = (l: { id?: string; description: string }) =>
+  l.id && l.id.trim() ? `id:${l.id}` : `desc:${l.description.trim().toLowerCase()}`;
+
+const formatAnswer = (value: unknown): string =>
+  Array.isArray(value) ? value.join(', ') : typeof value === 'string' ? value : value == null ? '' : String(value);
 
 /** Compare two quotes (e.g. a snapshot against the current draft). */
 export function compareQuotes(from: Quote, to: Quote): QuoteDiff {
@@ -90,11 +105,17 @@ export function compareQuotes(from: Quote, to: Quote): QuoteDiff {
     const prev = fromLines.get(key);
     if (!prev) {
       lineChanges.push({ description: next.description, kind: 'added', to: pick(next) });
-    } else if (
-      prev.quantity !== next.quantity || prev.unit !== next.unit ||
-      prev.material !== next.material || prev.hours !== next.hours || prev.rate !== next.rate
-    ) {
-      lineChanges.push({ description: next.description, kind: 'changed', from: pick(prev), to: pick(next) });
+    } else {
+      const renamed = prev.description !== next.description;
+      const changed = renamed || prev.quantity !== next.quantity || prev.unit !== next.unit ||
+        prev.material !== next.material || prev.hours !== next.hours || prev.rate !== next.rate;
+      if (changed) {
+        lineChanges.push({
+          description: next.description,
+          ...(renamed ? { fromDescription: prev.description } : {}),
+          kind: 'changed', from: pick(prev), to: pick(next),
+        });
+      }
     }
   }
   for (const [key, prev] of fromLines) {
@@ -105,17 +126,34 @@ export function compareQuotes(from: Quote, to: Quote): QuoteDiff {
     .filter(f => from[f] !== to[f])
     .map(f => ({ field: f, from: from[f], to: to[f] }));
 
-  const pricingChanges = (Object.keys(from.pricing) as (keyof Quote['pricing'])[])
+  const answerKeys = Array.from(new Set([...Object.keys(from.answers), ...Object.keys(to.answers)])).sort();
+  const answerChanges = answerKeys
+    .filter(k => formatAnswer(from.answers[k]) !== formatAnswer(to.answers[k]))
+    .map(k => ({ field: k, from: formatAnswer(from.answers[k]), to: formatAnswer(to.answers[k]) }));
+
+  const quoteChanges = (['type', 'kind', 'stage'] as const)
+    .filter(f => from[f] !== to[f])
+    .map(f => ({ field: f, from: String(from[f]), to: String(to[f]) }));
+
+  const pricingChanges: QuoteDiff['pricingChanges'] = (Object.keys(from.pricing) as (keyof Quote['pricing'])[])
     .filter(f => from.pricing[f] !== to.pricing[f])
     .map(f => ({ field: f, from: from.pricing[f], to: to.pricing[f] }));
+  if ((from.discountPercent ?? 0) !== (to.discountPercent ?? 0)) {
+    pricingChanges.push({ field: 'discountPercent', from: from.discountPercent ?? 0, to: to.discountPercent ?? 0 });
+  }
+  if ((from.tier ?? '') !== (to.tier ?? '')) {
+    pricingChanges.push({ field: 'tier', from: from.tier ?? '', to: to.tier ?? '' });
+  }
 
-  const fromTotals = totals(from.lines, from.pricing);
-  const toTotals = totals(to.lines, to.pricing);
+  // Customer-facing totals use Review's discounted pricing semantics: the owner
+  // discount compresses markup, so a discount change must surface here.
+  const fromTotals = discountedTotals(from.lines, from.pricing, from.discountPercent ?? 0);
+  const toTotals = discountedTotals(to.lines, to.pricing, to.discountPercent ?? 0);
   const totalChanges = (Object.keys(fromTotals) as (keyof typeof fromTotals)[])
     .filter(f => fromTotals[f] !== toTotals[f])
     .map(f => ({ field: f, from: fromTotals[f], to: toTotals[f] }));
 
-  return { lineChanges, scopeChanges, pricingChanges, totalChanges };
+  return { lineChanges, scopeChanges, answerChanges, quoteChanges, pricingChanges, totalChanges };
 }
 
 const pick = (l: { quantity: number; unit: string; material: number; hours: number; rate: number }) =>
@@ -135,6 +173,11 @@ export type HistoryStorage = {
   setItem(key: string, value: string): void;
 };
 
+const JOB_TYPES = ['renovation', 'roofing', 'contracting'];
+const STAGES = ['guide', 'pricing', 'review'];
+const KINDS = ['estimate', 'fixed'];
+const TIERS = ['value', 'standard', 'premium'];
+
 function validSnapshot(s: unknown): s is QuoteSnapshot {
   if (!s || typeof s !== 'object') return false;
   const snap = s as Partial<QuoteSnapshot>;
@@ -143,9 +186,31 @@ function validSnapshot(s: unknown): s is QuoteSnapshot {
     typeof snap.quoteId === 'string' && snap.quoteId.length > 0 &&
     typeof snap.name === 'string' &&
     typeof snap.createdAt === 'string' && !Number.isNaN(Date.parse(snap.createdAt)) &&
-    !!snap.quote && typeof snap.quote.id === 'string' && snap.quote.id.length > 0 &&
-    Array.isArray(snap.quote.lines) && snap.quote.lines.every(l => !!l && typeof l.description === 'string' && Number.isFinite(l.quantity) && Number.isFinite(l.material) && Number.isFinite(l.hours) && Number.isFinite(l.rate)) &&
-    !!snap.quote.pricing && Number.isFinite(snap.quote.pricing.laborRate) && Number.isFinite(snap.quote.pricing.markup) && Number.isFinite(snap.quote.pricing.contingency) && Number.isFinite(snap.quote.pricing.tax)
+    validQuote(snap.quote)
+  );
+}
+
+/** Validate the complete supported Quote shape; partial snapshots are refused, never silently kept. */
+function validQuote(q: unknown): q is Quote {
+  if (!q || typeof q !== 'object') return false;
+  const quote = q as Partial<Quote>;
+  return (
+    typeof quote.id === 'string' && quote.id.length > 0 &&
+    typeof quote.createdAt === 'string' && !Number.isNaN(Date.parse(quote.createdAt)) &&
+    typeof quote.updatedAt === 'string' && !Number.isNaN(Date.parse(quote.updatedAt)) &&
+    typeof quote.type === 'string' && JOB_TYPES.includes(quote.type) &&
+    typeof quote.stage === 'string' && STAGES.includes(quote.stage) &&
+    typeof quote.kind === 'string' && KINDS.includes(quote.kind) &&
+    (quote.tier === undefined || (typeof quote.tier === 'string' && TIERS.includes(quote.tier))) &&
+    (quote.discountPercent === undefined || (typeof quote.discountPercent === 'number' && Number.isFinite(quote.discountPercent))) &&
+    !!quote.answers && typeof quote.answers === 'object' && !Array.isArray(quote.answers) &&
+    typeof quote.exclusions === 'string' && typeof quote.assumptions === 'string' && typeof quote.terms === 'string' &&
+    typeof quote.acknowledged === 'boolean' &&
+    Array.isArray(quote.lines) && quote.lines.every(l =>
+      !!l && typeof l.id === 'string' && l.id.length > 0 && typeof l.description === 'string' && typeof l.unit === 'string' &&
+      Number.isFinite(l.quantity) && Number.isFinite(l.material) && Number.isFinite(l.hours) && Number.isFinite(l.rate)) &&
+    !!quote.pricing && Number.isFinite(quote.pricing.laborRate) && Number.isFinite(quote.pricing.markup) &&
+    Number.isFinite(quote.pricing.contingency) && Number.isFinite(quote.pricing.tax)
   );
 }
 
@@ -178,6 +243,16 @@ export function saveHistory(snapshots: QuoteSnapshot[], storage: HistoryStorage 
   } catch (e) {
     return e instanceof Error && (e.name === 'QuotaExceededError' || (e as { code?: number }).code === 22) ? 'Storage is full. Remove old snapshots or export the quote.' : 'Version history could not be saved. Existing browser data has been preserved.';
   }
+}
+
+/** Save one quote's snapshot list while preserving every other quote's persisted history. */
+export function mergeQuoteHistory(activeQuoteId: string, updatedSnapshots: QuoteSnapshot[], storage?: HistoryStorage): string {
+  const existing = loadHistory(storage);
+  // Never overwrite unreadable persisted data — refuse and surface the error.
+  if (existing.error) return existing.error;
+  const others = existing.snapshots.filter(s => s.quoteId !== activeQuoteId);
+  const mine = updatedSnapshots.filter(s => s.quoteId === activeQuoteId).slice(-MAX_SNAPSHOTS);
+  return saveHistory([...others, ...mine], storage);
 }
 
 /** Load one quote's history, capped to the newest MAX_SNAPSHOTS. */

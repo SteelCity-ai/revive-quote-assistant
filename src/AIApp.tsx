@@ -12,7 +12,7 @@ import {generate,fingerprint} from './ai';
 import {download,load,save} from './storage';
 import VoicePanel from './VoicePanel';
 import {portalRequest,type PortalProject} from './portal';
-import {loadQuoteHistory,saveHistory,restoreSnapshot,type QuoteSnapshot} from './history';
+import {loadQuoteHistory,mergeQuoteHistory,restoreSnapshot,type QuoteSnapshot} from './history';
 export default function AIApp(){
   const [loaded]=useState(load);const [data,setData]=useState(loaded.data);const [storageError,setStorageError]=useState(loaded.error);
   const [activeId,setActiveId]=useState<string|null>(null);const [settings,setSettings]=useState(false);const [busy,setBusy]=useState(false);const [error,setError]=useState('');
@@ -40,8 +40,7 @@ export default function AIApp(){
   useEffect(()=>{if(pristine.current){pristine.current=false;return;}if(loaded.error)return;try{save(data);setStorageError('');}catch{setStorageError('Device storage is unavailable or full. Export a backup before leaving.');}},[data,loaded.error]);
   useEffect(()=>()=>controller.current?.abort(),[]);
   const quote=data.quotes.find(q=>q.id===activeId);
-  const refreshHistory=(id:string)=>{const h=loadQuoteHistory(id);setHistoryState(h);setHistoryError(h.error);};
-  useEffect(()=>{if(activeId)refreshHistory(activeId);},[activeId]);
+  const refreshHistory=(id:string)=>{const h=loadQuoteHistory(id);setHistoryState(h);setHistoryError(h.error);};  useEffect(()=>{if(activeId)refreshHistory(activeId);},[activeId]);
   const update=(patch:Partial<Quote>,approval=false)=>setData(current=>({...current,quotes:current.quotes.map(q=>q.id!==activeId?q:{...q,...patch,updatedAt:new Date().toISOString(),approvedAt:approval?patch.approvedAt:undefined,acknowledged:approval?q.acknowledged:patch.acknowledged??false})}));
   const cancel=()=>{controller.current?.abort();controller.current=null;setBusy(false);setError('');};
   const home=()=>{cancel();setActiveId(null);setSettings(false);window.scrollTo({top:0});};
@@ -57,7 +56,7 @@ export default function AIApp(){
     }catch(e){if(!abort.signal.aborted){setError(e instanceof Error?e.message:'Could not prepare the estimate. Please retry.');setBusy(false);}}
   };
   const navigate=(stage:Quote['stage'])=>{update({stage});window.scrollTo({top:0});};
-  const captureSnapshot=(_snapshot:QuoteSnapshot,updated:QuoteSnapshot[]):string=>{const err=saveHistory(updated);if(err){setHistoryError(err);return err;}setHistoryState({snapshots:updated,error:''});setHistoryError('');return '';};
+  const captureSnapshot=(_snapshot:QuoteSnapshot,updated:QuoteSnapshot[]):string=>{const err=mergeQuoteHistory(_snapshot.quoteId,updated);if(err){setHistoryError(err);return err;}setHistoryState({snapshots:updated,error:''});setHistoryError('');return '';};
   const restoreFromSnapshot=(snapshot:QuoteSnapshot)=>{const restored=restoreSnapshot(snapshot);setData(d=>({...d,quotes:[restored,...d.quotes]}));refreshHistory(restored.id);setActiveId(restored.id);window.scrollTo({top:0});};
   const voiceStart=(type:JobType,address:string):Quote=>{const q=makeQuote(type,data.pricing);q.answers={address};setData(d=>({...d,quotes:[q,...d.quotes]}));setActiveId(q.id);window.scrollTo({top:0});return q;};
   return <><Header home={home} settings={()=>{cancel();setSettings(true);}} saved={!storageError}/>{storageError&&<div role="alert" className="storage-warning">{storageError}</div>}{historyError&&<div role="alert" className="storage-warning">Version history: {historyError}</div>}

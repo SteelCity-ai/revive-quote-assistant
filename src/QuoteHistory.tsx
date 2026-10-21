@@ -141,7 +141,8 @@ export default function QuoteHistory({
 function DiffView({ diff }: { diff: QuoteDiff | null }) {
   if (!diff) return null;
   const empty =
-    !diff.lineChanges.length && !diff.scopeChanges.length && !diff.pricingChanges.length && !diff.totalChanges.length;
+    !diff.lineChanges.length && !diff.scopeChanges.length && !diff.answerChanges.length &&
+    !diff.quoteChanges.length && !diff.pricingChanges.length && !diff.totalChanges.length;
   return (
     <div className="history-diff" role="region" aria-label="Changes between checkpoint and current quote">
       {empty ? (
@@ -154,7 +155,14 @@ function DiffView({ diff }: { diff: QuoteDiff | null }) {
               <ul>
                 {diff.lineChanges.map((l, i) => (
                   <li key={i} className={`diff-line diff-${l.kind}`}>
-                    <span className="diff-kind">{l.kind}</span> {l.description || 'Unnamed item'}
+                    <span className="diff-kind">{l.kind}</span>{' '}
+                    {l.kind === 'changed' && l.fromDescription ? (
+                      <>
+                        {l.fromDescription || '(empty)'} → {l.description || '(empty)'}
+                      </>
+                    ) : (
+                      l.description || 'Unnamed item'
+                    )}
                     {l.kind === 'changed' && l.from && l.to && (
                       <small>
                         {' '}
@@ -173,8 +181,35 @@ function DiffView({ diff }: { diff: QuoteDiff | null }) {
               <h4>Scope text</h4>
               <ul>
                 {diff.scopeChanges.map((s, i) => (
-                  <li key={i}>
-                    <span className="diff-field">{s.field}</span> changed
+                  <li key={i} className="diff-entry">
+                    <span className="diff-field">{s.field}</span>
+                    <ValueChange from={s.from} to={s.to} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {diff.answerChanges.length > 0 && (
+            <div>
+              <h4>Job answers</h4>
+              <ul>
+                {diff.answerChanges.map((a, i) => (
+                  <li key={i} className="diff-entry">
+                    <span className="diff-field">{a.field}</span>
+                    <ValueChange from={a.from} to={a.to} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {diff.quoteChanges.length > 0 && (
+            <div>
+              <h4>Quote details</h4>
+              <ul>
+                {diff.quoteChanges.map((c, i) => (
+                  <li key={i} className="diff-entry">
+                    <span className="diff-field">{c.field}</span>
+                    <ValueChange from={c.from} to={c.to} />
                   </li>
                 ))}
               </ul>
@@ -185,8 +220,9 @@ function DiffView({ diff }: { diff: QuoteDiff | null }) {
               <h4>Pricing settings</h4>
               <ul>
                 {diff.pricingChanges.map((p, i) => (
-                  <li key={i}>
-                    <span className="diff-field">{p.field}</span>: {String(p.from)} → {String(p.to)}
+                  <li key={i} className="diff-entry">
+                    <span className="diff-field">{p.field}</span>
+                    <ValueChange from={String(p.from)} to={String(p.to)} />
                   </li>
                 ))}
               </ul>
@@ -197,8 +233,9 @@ function DiffView({ diff }: { diff: QuoteDiff | null }) {
               <h4>Totals</h4>
               <ul>
                 {diff.totalChanges.map((t, i) => (
-                  <li key={i}>
-                    <span className="diff-field">{t.field}</span>: {money(t.from)} → {money(t.to)}
+                  <li key={i} className="diff-entry">
+                    <span className="diff-field">{t.field}</span>
+                    <ValueChange from={money(t.from)} to={money(t.to)} />
                   </li>
                 ))}
               </ul>
@@ -206,6 +243,16 @@ function DiffView({ diff }: { diff: QuoteDiff | null }) {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/** Readable old/new values: multiline text preserved, empty values called out. */
+function ValueChange({ from, to }: { from: string; to: string }) {
+  return (
+    <div className="diff-values">
+      <span className="diff-value diff-value-from">Before: {from === '' ? '(empty)' : from}</span>
+      <span className="diff-value diff-value-to">After: {to === '' ? '(empty)' : to}</span>
     </div>
   );
 }

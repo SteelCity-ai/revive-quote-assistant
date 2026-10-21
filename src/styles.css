@@ -84,5 +84,11 @@
 .diff-removed .diff-kind{color:#9d3434}
 .diff-changed .diff-kind{color:#8a6a1f}
 .diff-field{font-weight:650;color:var(--navy);text-transform:capitalize}
+.diff-entry{margin-top:3px}
+.diff-values{display:flex;flex-direction:column;gap:3px;margin-top:3px;min-width:0}
+.diff-value{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;border-left:3px solid var(--border);padding:2px 6px;border-radius:3px;background:rgba(0,0,0,.03)}
+.diff-value-from{border-left-color:#9d3434}
+.diff-value-to{border-left-color:#27734e}
+@media (max-width:480px){.diff-values{flex-direction:row;flex-wrap:wrap}.diff-value{flex:1 1 100%;max-width:100%}}
 .history-diff small{color:var(--muted)}
 @media(max-width:640px){.history-panel{padding:14px}.history-item-head{flex-direction:column;gap:2px}}
