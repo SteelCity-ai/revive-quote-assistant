@@ -303,6 +303,38 @@ export function searchSnippets(snippets: Snippet[], query: string): Snippet[] {
   );
 }
 
+export type ScopeMatch = {
+  snippetLineIndex: number;
+  existingIndex: number;
+  description: string;
+  unit: string;
+};
+
+// STE-109 F4: compare a selected snippet against the CURRENT quote lines and
+// report possible matching scope before append. Minimum comparable fields are
+// description and unit (case/whitespace-insensitive); prices/quantities are NOT
+// compared because they differ per job and are always snapshot-reviewed. The
+// count is the number of distinct existing lines that match, reported honestly
+// and conservatively so the user can decide whether to continue.
+export function findScopeMatches(snippet: Snippet, existingLines: Line[]): ScopeMatch[] {
+  if (!existingLines || !Array.isArray(existingLines) || !snippet || !Array.isArray(snippet.lines)) return [];
+  const norm = (s: string) => typeof s === 'string' ? s.trim().toLowerCase() : '';
+  const matches: ScopeMatch[] = [];
+  snippet.lines.forEach((sl, si) => {
+    const sDesc = norm(sl.description);
+    const sUnit = norm(sl.unit);
+    if (!sDesc) return;
+    existingLines.forEach((el, ei) => {
+      // Exclusions are wording-only and never duplicated as priced scope.
+      if (el.unit === 'exclusion' || sl.unit === 'exclusion') return;
+      if (sDesc === norm(el.description) && sUnit === norm(el.unit)) {
+        matches.push({ snippetLineIndex: si, existingIndex: ei, description: sl.description, unit: sl.unit });
+      }
+    });
+  });
+  return matches;
+}
+
 export function previewDuplicate(
   input: { name: string; lines: Line[] },
   snippets: Snippet[],
