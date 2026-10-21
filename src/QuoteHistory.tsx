@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { History, RotateCcw, Camera } from 'lucide-react';
 import type { Quote } from './domain';
 import { money } from './domain';
@@ -33,8 +33,30 @@ export default function QuoteHistory({
   const [note, setNote] = useState('');
   const [diffFor, setDiffFor] = useState<string | null>(null);
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const toggleRef = useRef<HTMLButtonElement | null>(null);
+  const confirmedRef = useRef(false);
 
   const list = useMemo(() => [...snapshots].reverse(), [snapshots]); // newest first
+  const confirmSnap = useMemo(
+    () => snapshots.find((s) => s.id === confirmRestore) ?? null,
+    [confirmRestore, snapshots],
+  );
+
+  // Open as a real modal: focus enters the dialog, Tab cycles inside it, and
+  // Escape cancels via the browser's native dialog cancel/close path.
+  useEffect(() => {
+    if (confirmRestore && dialogRef.current && !dialogRef.current.open) {
+      confirmedRef.current = false;
+      dialogRef.current.showModal();
+    }
+  }, [confirmRestore]);
+
+  const closeConfirm = (confirmed: boolean) => {
+    confirmedRef.current = confirmed;
+    dialogRef.current?.close();
+  };
   const diff = useMemo(() => {
     if (!diffFor) return null;
     const snap = snapshots.find((s) => s.id === diffFor);
@@ -55,7 +77,7 @@ export default function QuoteHistory({
   return (
     <section className="history-panel" aria-label="Version history">
       <div className="history-head">
-        <button className="text-button" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <button ref={toggleRef} className="text-button" aria-expanded={open} onClick={() => setOpen(!open)}>
           <History size={16} /> {open ? 'Hide version history' : 'Version history'}
           <span className="history-count"> ({snapshots.length}/{MAX_SNAPSHOTS})</span>
         </button>
@@ -103,25 +125,16 @@ export default function QuoteHistory({
                     >
                       {diffFor === snap.id ? 'Hide changes' : 'Compare with current'}
                     </button>
-                    <button className="text-button" onClick={() => setConfirmRestore(snap.id)}>
+                    <button
+                      className="text-button"
+                      onClick={(e) => {
+                        triggerRef.current = e.currentTarget;
+                        setConfirmRestore(snap.id);
+                      }}
+                    >
                       <RotateCcw size={14} /> Restore as new draft
                     </button>
                   </div>
-                  {confirmRestore === snap.id && (
-                    <div className="history-confirm" role="alertdialog" aria-label="Confirm restore">
-                      <p>
-                        Restore this checkpoint as a brand-new draft? The current quote stays
-                        unchanged, and the restored copy will need fresh approval before it can be
-                        issued.
-                      </p>
-                      <button className="secondary" onClick={() => { setConfirmRestore(null); onRestore(snap); }}>
-                        Restore as new draft
-                      </button>
-                      <button className="text-button" onClick={() => setConfirmRestore(null)}>
-                        Keep current quote
-                      </button>
-                    </div>
-                  )}
                   {diffFor === snap.id && <DiffView diff={diff} />}
                 </li>
               ))}
@@ -133,6 +146,43 @@ export default function QuoteHistory({
             and the restored copy needs fresh approval.
           </p>
         </div>
+      )}
+      {confirmSnap && (
+        <dialog
+          ref={dialogRef}
+          role="alertdialog"
+          aria-labelledby="restore-confirm-title"
+          className="history-confirm-dialog"
+          onClose={() => {
+            const confirmed = confirmedRef.current;
+            const snap = confirmSnap;
+            confirmedRef.current = false;
+            setConfirmRestore(null);
+            if (confirmed && snap) {
+              // Restored copy becomes the active quote; focus moves to the
+              // history panel so the user lands somewhere useful in the new view.
+              onRestore(snap);
+              toggleRef.current?.focus();
+            } else {
+              // Cancel/Escape returns focus to the activator, not to <body>.
+              triggerRef.current?.focus();
+            }
+          }}
+        >
+          <div className="history-confirm">
+            <h3 id="restore-confirm-title">Restore as new draft?</h3>
+            <p>
+              Restore this checkpoint as a brand-new draft? The current quote stays unchanged, and
+              the restored copy will need fresh approval before it can be issued.
+            </p>
+            <button className="secondary" autoFocus onClick={() => closeConfirm(true)}>
+              Restore as new draft
+            </button>
+            <button className="text-button" onClick={() => closeConfirm(false)}>
+              Keep current quote
+            </button>
+          </div>
+        </dialog>
       )}
     </section>
   );
