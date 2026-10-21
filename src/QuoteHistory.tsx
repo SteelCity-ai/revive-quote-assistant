@@ -57,6 +57,29 @@ export default function QuoteHistory({
     confirmedRef.current = confirmed;
     dialogRef.current?.close();
   };
+  // Native showModal makes the background inert but does not wrap Tab at the
+  // dialog's edges, so the caret can land on <body>. Wrap the cycle here:
+  // Tab on the last focusable moves to the first, Shift+Tab on the first moves
+  // to the last. Escape/close behavior stays native and untouched.
+  const trapDialogFocus = (e: React.KeyboardEvent<HTMLDialogElement>) => {
+    if (e.key !== 'Tab') return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusables = Array.from(
+      dialog.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'),
+    ).filter((el) => !el.hasAttribute('disabled'));
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const current = document.activeElement;
+    if (e.shiftKey && current === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && current === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
   const diff = useMemo(() => {
     if (!diffFor) return null;
     const snap = snapshots.find((s) => s.id === diffFor);
@@ -153,6 +176,7 @@ export default function QuoteHistory({
           role="alertdialog"
           aria-labelledby="restore-confirm-title"
           className="history-confirm-dialog"
+          onKeyDown={trapDialogFocus}
           onClose={() => {
             const confirmed = confirmedRef.current;
             const snap = confirmSnap;
