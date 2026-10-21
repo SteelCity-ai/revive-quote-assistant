@@ -1,6 +1,7 @@
 import { Plus, Trash2 } from 'lucide-react';
 import { money, newId } from './domain';
 import type { Line } from './domain';
+import ScopeSnippets from './ScopeSnippets';
 
 const UNITS = ['allowance', 'sq ft', 'linear ft', 'each', 'square', 'day', 'hr', 'exclusion'];
 
@@ -33,6 +34,7 @@ export default function LineEditor({ lines, laborRate, change }: { lines: Line[]
       <button className="secondary" onClick={() => add(newLaborLine(laborRate))}><Plus size={16}/>Add labor line (hrs × rate)</button>
       <button className="text-button" onClick={() => add(newExclusionLine(laborRate))}><Plus size={14}/>Add exclusion</button>
     </div>
+    <ScopeSnippets lines={lines} change={change}/>
     <p className="fine-print">A labor line is real priced labor (hours × rate), not an allowance. Every edit changes the quote — after a portal save, changes require a new approved revision to refresh the customer link.</p>
   </div>;
 }
