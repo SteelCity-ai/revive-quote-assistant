@@ -1,0 +1,211 @@
+/* Scoped styles for the standalone draft import dialog. No global selectors. */
+
+.draft-import {
+  /* Design tokens with sensible fallbacks; adapts to host app variables when present. */
+  --di-accent: #1d4ed8;
+  --di-danger: #b91c1c;
+  --di-warn-bg: #fef3c7;
+  --di-warn-border: #b45309;
+  --di-error-bg: #fee2e2;
+  --di-error-border: #b91c1c;
+  --di-border: #d4d4d8;
+  --di-radius: 8px;
+  --di-focus: 2px solid var(--di-accent);
+  --di-focus-offset: 2px;
+
+  border: 1px solid var(--di-border);
+  border-radius: var(--di-radius);
+  padding: 1rem 1.25rem;
+  max-width: 32rem;
+  width: calc(100% - 2rem);
+  color: #18181b;
+  background: #fff;
+}
+
+.draft-import::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.draft-import__heading {
+  margin: 0 0 0.5rem;
+  font-size: 1.125rem;
+  line-height: 1.4;
+}
+
+.draft-import__intro {
+  margin: 0 0 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: #3f3f46;
+}
+
+.draft-import__file-label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.draft-import__help,
+.draft-import__selected {
+  margin: 0.25rem 0 0;
+  font-size: 0.75rem;
+  color: #52525b;
+}
+
+.draft-import__error {
+  margin: 0.75rem 0 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--di-danger);
+  background: var(--di-error-bg);
+  border: 1px solid var(--di-error-border);
+  border-radius: var(--di-radius);
+}
+
+.draft-import__loading {
+  margin: 0.75rem 0 0;
+  font-size: 0.875rem;
+  color: #52525b;
+}
+
+.draft-import__preview {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--di-border);
+  border-radius: var(--di-radius);
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
+.draft-import__preview-heading {
+  margin: 0 0 0.5rem;
+  font-size: 0.9375rem;
+}
+
+.draft-import__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.draft-import__quote {
+  padding: 0.375rem 0;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  border-bottom: 1px solid var(--di-border);
+}
+
+.draft-import__quote:last-child {
+  border-bottom: 0;
+}
+
+.draft-import__quote-name {
+  display: block;
+  font-weight: 600;
+}
+
+.draft-import__dup-flag,
+.draft-import__quote-kind,
+.draft-import__quote-warning {
+  display: block;
+  font-size: 0.75rem;
+}
+
+.draft-import__dup-flag {
+  color: var(--di-warn-border);
+  font-weight: 600;
+}
+
+.draft-import__quote-warning {
+  color: #52525b;
+}
+
+.draft-import__notice {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  background: var(--di-warn-bg);
+  border: 1px solid var(--di-warn-border);
+  border-radius: var(--di-radius);
+}
+
+.draft-import__copy-block {
+  margin-top: 0.5rem;
+}
+
+.draft-import__copy-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.draft-import__copy-help {
+  margin: 0.25rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: #52525b;
+}
+
+.draft-import__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.draft-import__actions button {
+  font-size: 0.875rem;
+  padding: 0.5rem 1rem;
+  border-radius: var(--di-radius);
+  border: 1px solid var(--di-border);
+  background: #fff;
+  color: #18181b;
+  cursor: pointer;
+}
+
+.draft-import__actions button:focus-visible {
+  outline: var(--di-focus);
+  outline-offset: var(--di-focus-offset);
+}
+
+.draft-import__import {
+  background: var(--di-accent) !important;
+  border-color: var(--di-accent) !important;
+  color: #fff !important;
+}
+
+.draft-import__actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 390px target and narrow screens */
+@media (max-width: 26.25rem) {
+  .draft-import {
+    padding: 0.875rem;
+    width: calc(100vw - 2rem);
+    max-width: none;
+  }
+
+  .draft-import__actions {
+    flex-direction: column-reverse;
+  }
+
+  .draft-import__actions button {
+    width: 100%;
+  }
+}
+
+/* Reduced motion: the dialog relies on native rendering; suppress any inherited animation. */
+@media (prefers-reduced-motion: reduce) {
+  .draft-import,
+  .draft-import::backdrop {
+    animation: none;
+    transition: none;
+  }
+}
