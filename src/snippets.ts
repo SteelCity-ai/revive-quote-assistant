@@ -90,8 +90,6 @@ export function snippetMoneySafe(lines: SnippetLine[]): boolean {
   return Number.isFinite(total) && Number.isSafeInteger(Math.round(total * 100));
 }
 
-const cloneError = <T extends { ok: false; error: SnippetError }>(r: T): T => ({ ...r });
-
 function sanitizeLine(line: Line): SnippetLine | null {
   if (typeof line.description !== 'string' || !line.description.trim()) return null;
   const description = line.description.slice(0, MAX_DESC);
@@ -154,7 +152,13 @@ function parseStore(raw: string): { snippets: Snippet[] } | { error: SnippetErro
       if (typeof lo.description !== 'string' || typeof lo.unit !== 'string') return { error: 'corrupt-storage' };
       if (!isFiniteNonNeg(lo.quantity) || lo.quantity <= 0 || !isFiniteNonNeg(lo.material) ||
           !isFiniteNonNeg(lo.hours) || !isFiniteNonNeg(lo.rate)) return { error: 'corrupt-storage' };
-      if (!derivedMoneySafe(lo)) return { error: 'corrupt-storage' };
+      const typedLine: { quantity: number; material: number; hours: number; rate: number } = {
+        quantity: lo.quantity,
+        material: lo.material,
+        hours: lo.hours,
+        rate: lo.rate,
+      };
+      if (!derivedMoneySafe(typedLine)) return { error: 'corrupt-storage' };
     }
     if (!snippetMoneySafe(o.lines as SnippetLine[])) return { error: 'corrupt-storage' };
   }

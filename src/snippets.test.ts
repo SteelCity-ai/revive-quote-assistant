@@ -55,6 +55,12 @@ const save = (storage: SnippetsStorage, over: { name?: string; lines?: Line[] } 
 
 const expectErr = (r: { ok: boolean }) => expect(r.ok).toBe(false);
 
+const storedSnippets = (s: SnippetsStorage): Snippet[] => {
+  const r = loadSnippets(s);
+  expect(r.ok).toBe(true);
+  return r.ok ? r.snippets : [];
+};
+
 describe('snippets: storage key isolation', () => {
   it('uses its own key and never touches revive-quotes-v1', () => {
     const s = fakeStorage({ 'revive-quotes-v1': '{"version":1,"quotes":[],"pricing":{}}' });
@@ -112,7 +118,7 @@ describe('snippets: whitelist and metadata stripping', () => {
       line({ quantity: 0 }),
       line({ quantity: -2 }),
       line({ description: '   ' }),
-      line({ description: 42 }) as unknown as Line,
+      line({ description: 42 } as unknown as Partial<Line>),
     ]) {
       const r = save(s, { lines: [bad] });
       expectErr(r);
@@ -199,7 +205,7 @@ describe('snippets: duplicate preview', () => {
   it('finds an existing snippet with the same name and identical content', () => {
     const s = fakeStorage();
     save(s);
-    const { snippets } = loadSnippets(s);
+    const snippets = storedSnippets(s);
     expect(previewDuplicate({ name: 'wall PATCH', lines: [line()] }, snippets)).not.toBeNull();
     expect(
       previewDuplicate({ name: 'Wall patch', lines: [line({ description: 'different' })] }, snippets),
@@ -214,7 +220,7 @@ describe('snippets: search and delete', () => {
     const s = fakeStorage();
     save(s, { name: 'Wall patch' });
     save(s, { name: 'Roof tear-off', lines: [line({ description: 'TPO membrane removal' })] });
-    const { snippets } = loadSnippets(s);
+    const snippets = storedSnippets(s);
     expect(searchSnippets(snippets, 'patch')).toHaveLength(1);
     expect(searchSnippets(snippets, 'TPO')).toHaveLength(1);
     expect(searchSnippets(snippets, 'WALL')).toHaveLength(1);
@@ -224,15 +230,18 @@ describe('snippets: search and delete', () => {
 
   it('deletes by id and reports unknown ids', () => {
     const s = fakeStorage();
-    const a = save(s).snippet!;
+    const saved = save(s);
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) return;
+    const a = saved.snippet;
     save(s, { name: 'Second' });
     const d = deleteSnippet(a.id, s);
     expect(d.ok).toBe(true);
-    expect(d.deleted).toBe(true);
-    expect(loadSnippets(s).snippets).toHaveLength(1);
+    if (d.ok) expect(d.deleted).toBe(true);
+    expect(storedSnippets(s)).toHaveLength(1);
     const d2 = deleteSnippet('missing-id', s);
     expect(d2.ok).toBe(false);
-    expect(d2.error).not.toBe('');
+    if (!d2.ok) expect(d2.error).not.toBe('');
   });
 });
 
@@ -242,7 +251,7 @@ describe('snippets: corrupt store handling', () => {
     const s = fakeStorage({ [SNIPPETS_STORAGE_KEY]: corrupt });
     const r = loadSnippets(s);
     expect(r.ok).toBe(false);
-    expect(r.error).toBe('unsupported-version');
+    if (!r.ok) expect(r.error).toBe('unsupported-version');
     expect(s.data[SNIPPETS_STORAGE_KEY]).toBe(corrupt);
     // Mutations refuse to overwrite unreadable persisted data.
     expectErr(save(s));
@@ -307,10 +316,10 @@ describe('snippets: bounds and quota atomicity', () => {
       const r = save(s, { name: `S${i}`, lines: [line({ description: `item ${i}` })] });
       expect(r.ok).toBe(true);
     }
-    expect(loadSnippets(s).snippets).toHaveLength(SNIPPETS_MAX_COUNT);
+    expect(storedSnippets(s)).toHaveLength(SNIPPETS_MAX_COUNT);
     const overflow = save(s, { name: 'One too many' });
     expect(overflow.ok).toBe(false);
-    expect(loadSnippets(s).snippets).toHaveLength(SNIPPETS_MAX_COUNT);
+    expect(storedSnippets(s)).toHaveLength(SNIPPETS_MAX_COUNT);
   });
 
   it('enforces max 200 lines per snippet', () => {
@@ -364,9 +373,9 @@ describe('snippets: load round-trip', () => {
     const s = fakeStorage();
     const empty = loadSnippets(s);
     expect(empty.ok).toBe(true);
-    expect(empty.snippets).toEqual([]);
+    if (empty.ok) expect(empty.snippets).toEqual([]);
     save(s, { name: 'Round trip', lines: [line(), line({ description: 'Second item', quantity: 3 })] });
-    const { snippets } = loadSnippets(s);
+    const snippets = storedSnippets(s);
     expect(snippets).toHaveLength(1);
     expect(snippets[0].name).toBe('Round trip');
     expect(snippets[0].lines).toHaveLength(2);
