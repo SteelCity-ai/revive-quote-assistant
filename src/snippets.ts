@@ -49,6 +49,7 @@ export type SnippetError =
   | 'quota-lines'
   | 'quota-storage'
   | 'corrupt-storage'
+  | 'storage-denied'
   | 'unsupported-version';
 
 export type LoadSnippetsResult =
@@ -183,7 +184,14 @@ export function loadSnippets(storage?: SnippetsStorage): LoadSnippetsResult {
   } catch {
     return { ok: false, error: 'corrupt-storage' };
   }
-  const raw = st.getItem(SNIPPETS_STORAGE_KEY);
+  let raw: string | null;
+  try {
+    raw = st.getItem(SNIPPETS_STORAGE_KEY);
+  } catch {
+    // Denied/blocked storage must surface as a typed, recoverable error
+    // rather than crash — never silently clear or overwrite stored data.
+    return { ok: false, error: 'storage-denied' };
+  }
   if (raw === null) return { ok: true, snippets: [] };
   const parsed = parseStore(raw);
   if ('error' in parsed) return { ok: false, error: parsed.error };
@@ -275,8 +283,13 @@ export function appendSnippetLines(
     hours: l.hours,
     rate: l.rate,
   }));
-  if (!snippetMoneySafe(appended)) return { ok: false, error: 'invalid-input' };
-  return { ok: true, lines: [...existingLines, ...appended], appended };
+  // F2: validate the COMPLETE combined resulting scope (existing + appended),
+  // not just the appended lines. A lone line can satisfy snippetMoneySafe while
+  // the merged quote overflows the monetary safety limit. Preserve the original
+  // lines and stored snippets on rejection.
+  const combined: Line[] = [...existingLines, ...appended];
+  if (!snippetMoneySafe(combined)) return { ok: false, error: 'invalid-input' };
+  return { ok: true, lines: combined, appended };
 }
 
 export function searchSnippets(snippets: Snippet[], query: string): Snippet[] {
