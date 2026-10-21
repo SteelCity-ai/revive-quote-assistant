@@ -296,20 +296,53 @@ export function parseDraftImport(text: string, existing: Quote[]): ImportPreview
 export function commitDraftImport(preview: ImportPreview, current: SavedState, options: { allowDuplicates: boolean }, store: Pick<Storage, 'setItem'> = localStorage): SavedState {
   if (!preview || !Array.isArray(preview.quotes)) fail('Invalid import preview');
   if (!current || !Array.isArray(current.quotes)) fail('Invalid current state');
-  if (preview.duplicates.length && !options?.allowDuplicates) fail('Import contains duplicates. Choose Copy or Cancel.');
   if (preview.quotes.length > MAX_QUOTES) fail(`Import exceeds ${MAX_QUOTES} quotes`);
+  // B2 hardening: never trust preview data (quotes, duplicates, warnings, format).
+  // Re-run every preview quote through the same strict whitelist and money bounds
+  // used at parse time, so a tampered/stale preview cannot smuggle metadata,
+  // invalid pricing or oversized values into saved state.
+  const sanitized = preview.quotes.map((raw, index) => {
+    const quote = candidate(raw, `import.quotes[${index}]`);
+    validateQuoteMoneyBounds(quote, `import.quotes[${index}]`);
+    return quote;
+  });
+
+  // Recompute duplicate detection from ACTUAL current quotes plus the sanitized
+  // batch — preview.duplicates may be stale or tampered in either direction.
+  const seenFingerprints = new Set(current.quotes.map(fingerprintExisting));
+  const seenIds = new Set(current.quotes.map(quote => quote.id));
+  const batchDuplicates: number[] = [];
+  for (let index = 0; index < sanitized.length; index++) {
+    const quote = sanitized[index];
+    if (seenIds.has(quote.id) || seenFingerprints.has(fingerprint(quote))) {
+      batchDuplicates.push(index);
+      continue;
+    }
+    seenIds.add(quote.id);
+    seenFingerprints.add(fingerprint(quote));
+  }
+  if (batchDuplicates.length && !options?.allowDuplicates) fail('Import contains duplicates. Choose Copy or Cancel.');
+
   const now = new Date().toISOString();
   const next: SavedState = {
     version: 1,
-    quotes: [...current.quotes, ...preview.quotes.map(quote => ({
-      ...quote,
+    quotes: [...current.quotes, ...sanitized.map(quote => ({
       id: newId(),
+      type: quote.type,
       createdAt: now,
       updatedAt: now,
+      acknowledged: false,
       step: 0,
       stage: 'review' as const,
+      answers: quote.answers,
       lines: quote.lines.map(line => ({ ...line, id: newId() })),
-      acknowledged: false,
+      pricing: quote.pricing,
+      exclusions: quote.exclusions,
+      assumptions: quote.assumptions,
+      terms: quote.terms,
+      kind: quote.kind,
+      tier: quote.tier,
+      discountPercent: quote.discountPercent,
     }))],
     pricing: { ...current.pricing },
   };

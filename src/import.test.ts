@@ -143,7 +143,7 @@ describe('commitDraftImport', () => {
 
   it('throws on duplicates unless allowDuplicates, before any write', () => {
     const preview = parseDraftImport(reviewExport(), existingQuotes());
-    expect(() => commitDraftImport(preview, { version: 1, quotes: [], pricing: { laborRate: 1, markup: 1, contingency: 1, tax: 1 } }, { allowDuplicates: false }, fakeStorage)).toThrow(/duplicate/i);
+    expect(() => commitDraftImport(preview, { version: 1, quotes: existingQuotes(), pricing: { laborRate: 1, markup: 1, contingency: 1, tax: 1 } }, { allowDuplicates: false }, fakeStorage)).toThrow(/duplicate/i);
     expect(store.size).toBe(0);
   });
 
@@ -170,7 +170,7 @@ describe('commitDraftImport', () => {
   it('preserves existing quotes untouched', () => {
     const existing = existingQuotes();
     const preview = parseDraftImport(backupExport([validQuote({ id: 'fresh-9' })]), []);
-    const next = commitDraftImport(preview, { version: 1, quotes: existing, pricing: { laborRate: 1, markup: 1, contingency: 1, tax: 1 } }, { allowDuplicates: false }, fakeStorage);
+    const next = commitDraftImport(preview, { version: 1, quotes: existing, pricing: { laborRate: 1, markup: 1, contingency: 1, tax: 1 } }, { allowDuplicates: true }, fakeStorage);
     expect(next.quotes[0]).toEqual(existing[0]);
     expect(next.quotes[1].id).not.toBe('fresh-9'); // fresh UUID, imported id discarded
   });
