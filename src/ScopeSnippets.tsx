@@ -5,7 +5,7 @@ import { money } from './domain';
 import type { Line } from './domain';
 import {
   loadSnippets, saveSnippet, deleteSnippet, appendSnippetLines,
-  searchSnippets, previewDuplicate, previewSnippet, findSnippet,
+  searchSnippets, previewDuplicate, previewSnippet, findSnippet, findScopeMatches,
 } from './snippets';
 import type { Snippet, SnippetError } from './snippets';
 import './scope-snippets.css';
@@ -74,6 +74,9 @@ export default function ScopeSnippets({ lines, change }: { lines: Line[]; change
   const selectedLines = useMemo(() => lines.filter(l => selected.has(l.id)), [lines, selected]);
   const filtered = useMemo(() => snippets ? searchSnippets(snippets, query) : [], [snippets, query]);
   const preview = previewId ? findSnippet(previewId, snippets ?? []) : null;
+  // STE-109 F4: compare the snippet pending append against CURRENT quote lines.
+  const pendingAppend = confirmAppendId ? findSnippet(confirmAppendId, snippets ?? []) : null;
+  const appendScopeMatches = pendingAppend ? findScopeMatches(pendingAppend, lines) : [];
 
   const openSave = () => {
     setSelected(new Set(lines.map(l => l.id)));
@@ -180,6 +183,12 @@ export default function ScopeSnippets({ lines, change }: { lines: Line[]; change
           </div>}
           {confirmAppendId === s.id && <div className="snippet-confirm" role="alertdialog" aria-label={`Confirm append ${s.name}`}>
             <p>Append “{s.name}” to the end of this quote’s lines? Its saved prices and the saved date are a snapshot — review every appended line before approving.</p>
+            {appendScopeMatches.length > 0 && <div className="snippet-confirm-warning" role="alert">
+              <strong>Possible duplicate scope</strong>
+              <p>{appendScopeMatches.length === 1
+                ? `1 existing line in this quote matches a line in “${s.name}” (same description and unit). Appending could create a duplicate.`
+                : `${appendScopeMatches.length} existing lines in this quote match lines in “${s.name}” (same description and unit). Appending could create duplicates.`} Review before continuing.</p>
+            </div>}
             <button className="primary" onClick={() => doAppend(s.id)}>Append {s.lines.length} line{s.lines.length === 1 ? '' : 's'}</button>
             <button className="text-button" onClick={() => setConfirmAppendId(null)}>Cancel</button>
           </div>}

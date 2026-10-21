@@ -7,11 +7,11 @@ import { expect, it } from 'vitest';
 import {
   SNIPPETS_STORAGE_KEY,
   appendSnippetLines, deleteSnippet, loadSnippets, previewDuplicate,
-  previewSnippet, saveSnippet, searchSnippets,
+  previewSnippet, saveSnippet, searchSnippets, findScopeMatches,
 } from './snippets';
 import type { SnippetLine, SnippetsStorage } from './snippets';
 
-const line = (over: Partial<SnippetLine> = {}): any => ({
+const line = (over: Partial<SnippetLine> & Record<string, unknown> = {}): any => ({
   id: 'l1', description: 'Patch drywall', quantity: 1, unit: 'ea',
   material: 15, hours: 2, rate: 65, ...over,
 });
@@ -108,6 +108,60 @@ it('UI duplicate warning: exact name+lines duplicate is detected', () => {
   if (!all.ok) return;
   expect(previewDuplicate({ name: 'Patch', lines: [line()] }, all.snippets)).not.toBeNull();
   expect(previewDuplicate({ name: 'Patch', lines: [line({ description: 'Other' })] }, all.snippets)).toBeNull();
+});
+
+// STE-109 F4 duplicate-current-scope warning: findScopeMatches compares a
+// selected snippet against CURRENT quote lines (before append) on the minimum
+// comparable fields (description + unit), and the UI warns with an honest count
+// while still letting the user continue.
+it('STE-109 F4: identical current-scope line is flagged as a possible duplicate', () => {
+  const st = store();
+  const save = saveSnippet({ name: 'Patch', lines: [line()] }, st);
+  expect(save.ok).toBe(true);
+  if (!save.ok) return;
+  // Current quote already contains the exact same line (same description+unit).
+  const current: any[] = [line({ id: 'q1' }), line({ id: 'q2', description: 'Unrelated work', unit: 'sq ft' })];
+  const matches = findScopeMatches(save.snippet, current);
+  expect(matches).toHaveLength(1);
+  expect(matches[0].existingIndex).toBe(0);
+  expect(matches[0].description).toBe('Patch drywall');
+  expect(matches[0].unit).toBe('ea');
+});
+
+it('STE-109 F4: distinct description or unit is not flagged; count is honest and conservative', () => {
+  const st = store();
+  const save = saveSnippet({
+    name: 'Patch',
+    lines: [
+      line({ description: 'Patch drywall', unit: 'ea' }),
+      line({ description: 'Patch drywall', unit: 'sq ft' }), // same desc, diff unit -> no match
+      line({ description: 'Install tile', unit: 'sq ft' }),
+    ],
+  }, st);
+  expect(save.ok).toBe(true);
+  if (!save.ok) return;
+  const current: any[] = [
+    line({ id: 'q1', description: 'Patch drywall', unit: 'ea' }),
+    line({ id: 'q2', description: 'Install tile', unit: 'sq ft' }),
+  ];
+  const matches = findScopeMatches(save.snippet, current);
+  // Two distinct snippet rows match (patch/ea and tile/sq ft); the patch/sq ft row does not.
+  expect(matches).toHaveLength(2);
+  expect(matches.map((m) => `${m.unit}:${m.snippetLineIndex}`)).toEqual(['ea:0', 'sq ft:2']);
+  // Case/whitespace-insensitive description still matches (minimum comparable fields).
+  const caseCurrent = [line({ id: 'q9', description: '  PATCH DRYWALL ', unit: 'EA' })];
+  expect(findScopeMatches(save.snippet, caseCurrent)).toHaveLength(1);
+  // No current lines -> no warning.
+  expect(findScopeMatches(save.snippet, [])).toHaveLength(0);
+});
+
+it('STE-109 F4: exclusion lines are never flagged as duplicate priced scope', () => {
+  const st = store();
+  const save = saveSnippet({ name: 'Exclusions', lines: [line({ description: 'Not included', unit: 'exclusion' })] }, st);
+  expect(save.ok).toBe(true);
+  if (!save.ok) return;
+  const current: any[] = [line({ id: 'q1', description: 'Not included', unit: 'exclusion' })];
+  expect(findScopeMatches(save.snippet, current)).toHaveLength(0);
 });
 
 // Delete confirmation: deleteSnippet after confirm removes only that snippet.
