@@ -48,17 +48,19 @@
 .line-edit-head{display:flex;align-items:center;gap:9px}
 .line-edit-head input{flex:1;min-width:0;border:1px solid #dfe7ec;border-radius:7px;padding:9px 11px;font-size:13px;color:var(--navy)}
 .line-edit-head .icon-button{width:34px;height:34px}
-.line-edit-fields{display:grid;grid-template-columns:1fr 1fr 1.2fr 1fr 1fr;gap:9px;margin-top:10px}
-.line-edit-fields .field{margin:0}
-.line-edit-fields .field>span{font-size:9px;margin-bottom:4px}
-.line-edit-fields input,.line-edit-fields select{font-size:13px;padding:8px 9px}
+.line-edit-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr);gap:9px;margin-top:10px}
+.line-edit-fields .field{margin:0;min-width:0}
+.line-edit-fields .field>span{font-size:9px;margin-bottom:4px;overflow-wrap:anywhere}
+.line-edit-fields input,.line-edit-fields select{font-size:13px;padding:8px 9px;min-width:0;width:100%}
+.line-edit-fields input[type=number]{min-width:0}
+.line-edit-fields select{min-width:0}
 .line-edit-total{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:10px}
 .line-edit-total small{font-size:10px;color:var(--muted)}
 .line-edit-total strong{font-size:14px;white-space:nowrap}
 .line-add-buttons{display:grid;gap:8px;margin-top:13px}
 .line-add-buttons .secondary{min-height:44px;font-size:12px}
 .pricing-layout .add-line{margin-bottom:9px}
-@media(max-width:640px){.line-edit-fields{grid-template-columns:1fr 1fr}.line-edit-head input{font-size:16px}.line-edit-fields input,.line-edit-fields select{font-size:16px}}
+@media(max-width:640px){.line-edit-fields{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}.line-edit-head input{font-size:16px}.line-edit-fields input,.line-edit-fields select{font-size:16px}}
 
 .voice-fab.voice-resume{background:var(--teal,#087f78);padding:10px 15px;font-size:13px;bottom:calc(env(safe-area-inset-bottom, 0px) + 20px)}
 
