@@ -22,17 +22,37 @@ const ERROR_TEXT: Record<SnippetError, string> = {
 
 type PanelMode = 'closed' | 'save' | 'library';
 
+// Pure focus-restore decision (unit-testable without a DOM renderer). On real
+// close/unmount the dialog restores keyboard focus to the connected opener so
+// the user keeps their position; if the opener was removed, fall back to a
+// connected focusable element instead of leaving focus on <body>.
+export function resolveFocusRestore(
+  opener: { isConnected: boolean } | null,
+  fallback: { isConnected: boolean } | null,
+): { isConnected: boolean } | null {
+  if (opener && opener.isConnected) return opener;
+  return fallback;
+}
+
 const snippetTotal = (lines: { quantity: number; material: number; hours: number; rate: number }[]) =>
   lines.reduce((s, l) => s + l.quantity * l.material + l.hours * l.rate, 0);
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
+  // Keep the latest onClose without re-running the focus/restore effect on every
+  // parent or search render (the inline callback would otherwise re-focus and
+  // jump the keyboard position while typing in the library search box).
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  // The connected element that opened the dialog, captured once on actual mount.
+  const openerRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
+    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const el = ref.current;
     const focusable = el?.querySelector<HTMLElement>('input, button, select, textarea, [tabindex]:not([tabindex="-1"])');
     focusable?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.stopPropagation(); onClose(); return; }
+      if (e.key === 'Escape') { e.stopPropagation(); onCloseRef.current(); return; }
       if (e.key === 'Tab' && el) {
         const items = [...el.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])')].filter(n => n.offsetParent !== null);
         if (!items.length) return;
@@ -42,8 +62,16 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
       }
     };
     document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      // On real close/unmount, restore keyboard focus to the opener so the user
+      // keeps their position. If the opener was removed from the document, fall
+      // back to the first focusable element still connected.
+      const fallback = document.querySelector<HTMLElement>('a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])');
+      const target = resolveFocusRestore(openerRef.current, fallback);
+      target?.focus();
+    };
+  }, []);
   return <div className="snippet-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
     <div className="snippet-modal" role="dialog" aria-modal="true" aria-label={title} ref={ref}>
       <div className="snippet-modal-head"><h2>{title}</h2><button className="icon-button" aria-label="Close snippet dialog" onClick={onClose}><X size={18}/></button></div>

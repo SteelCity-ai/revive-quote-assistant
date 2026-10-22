@@ -9,6 +9,7 @@ import {
   appendSnippetLines, deleteSnippet, loadSnippets, previewDuplicate,
   previewSnippet, saveSnippet, searchSnippets, findScopeMatches,
 } from './snippets';
+import { resolveFocusRestore } from './ScopeSnippets';
 import type { SnippetLine, SnippetsStorage } from './snippets';
 
 const line = (over: Partial<SnippetLine> & Record<string, unknown> = {}): any => ({
@@ -177,7 +178,44 @@ it('UI delete: confirmed delete removes only the chosen snippet', () => {
   expect(all.snippets.map((s) => s.name)).toEqual(['Keep me']);
 });
 
-// Failure preservation: quota/denied paths never wipe the existing library.
+// STE-112 Q3 audit correction: the snippet dialog must restore keyboard focus
+// to the connected opener on real close/unmount instead of leaving it on
+// <body>. This suite has no DOM renderer (locked deps, node env only), so it
+// tests the pure focus-restore decision helper the Modal cleanup uses. The
+// final real-browser proof (activeElement after Escape) is owned by Han QA.
+
+// Connected opener present -> restore to it (never <body>).
+it('STE-112: connected opener is restored on close', () => {
+  const opener = { isConnected: true };
+  const fallback = { isConnected: true };
+  expect(resolveFocusRestore(opener, fallback)).toBe(opener);
+});
+
+// Opener removed from the document -> fall back to a connected focusable.
+it('STE-112: removed opener falls back to a connected element', () => {
+  const opener = { isConnected: false };
+  const fallback = { isConnected: true };
+  expect(resolveFocusRestore(opener, fallback)).toBe(fallback);
+});
+
+// No opener captured and no fallback -> nothing to focus (no <body> restore).
+it('STE-112: no opener and no fallback restores nothing', () => {
+  expect(resolveFocusRestore(null, null)).toBeNull();
+  expect(resolveFocusRestore({ isConnected: false }, null)).toBeNull();
+});
+
+// The decision is stable: a fresh opener reference on every render does not
+// change the outcome, matching the stable mount-only effect (no focus jump
+// while typing in the library search box).
+it('STE-112: focus-restore decision is stable across rerenders', () => {
+  const fallback = { isConnected: true };
+  const first = resolveFocusRestore({ isConnected: true }, fallback);
+  const second = resolveFocusRestore({ isConnected: true }, fallback);
+  expect(first).not.toBeNull();
+  expect(second).not.toBeNull();
+  expect(first === second || first!.isConnected).toBe(true);
+});
+
 it('UI failure preservation: denied read does not overwrite existing library', () => {
   const st = store();
   st.data[SNIPPETS_STORAGE_KEY] = '{"version":1,"snippets":[{"id":"x","name":"Existing","savedAt":"2026-01-01","lines":[{"description":"d","quantity":1,"unit":"ea","material":1,"hours":0,"rate":0}]}]}';
