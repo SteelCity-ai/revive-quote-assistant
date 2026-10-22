@@ -26,10 +26,10 @@ type PanelMode = 'closed' | 'save' | 'library';
 // close/unmount the dialog restores keyboard focus to the connected opener so
 // the user keeps their position; if the opener was removed, fall back to a
 // connected focusable element instead of leaving focus on <body>.
-export function resolveFocusRestore(
-  opener: { isConnected: boolean } | null,
-  fallback: { isConnected: boolean } | null,
-): { isConnected: boolean } | null {
+export function resolveFocusRestore<T extends { isConnected: boolean }>(
+  opener: T | null,
+  fallback: T | null,
+): T | null {
   if (opener && opener.isConnected) return opener;
   return fallback;
 }
