@@ -1,5 +1,5 @@
 // STE-104: snippet library UI — uses the exact STE-103 module API only.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Bookmark, Trash2, Plus, X, Search, Check } from 'lucide-react';
 import { money } from './domain';
 import type { Line } from './domain';
@@ -22,28 +22,100 @@ const ERROR_TEXT: Record<SnippetError, string> = {
 
 type PanelMode = 'closed' | 'save' | 'library';
 
+// Pure focus-restore decision (unit-testable without a DOM renderer). On real
+// close/unmount the dialog restores keyboard focus to the exact opener so the
+// user keeps their position; if the opener was removed, fall back to a
+// connected focusable element instead of leaving focus on <body>.
+// The launcher stays mounted while the modal is open (inert), so the opener
+// remains connected and is preferred over any global fallback.
+export function resolveFocusRestore<T extends { isConnected: boolean }>(
+  opener: T | null,
+  fallback: T | null,
+): T | null {
+  if (opener && opener.isConnected) return opener;
+  return fallback;
+}
+
+// Open-dialog focus invariant (F7): while the dialog is open after a render,
+// keep keyboard focus inside the dialog. If focus is already inside (e.g. the
+// user is typing in the library search box), preserve it and do nothing. Only
+// when the previously focused child was removed (Save -> library panel change,
+// or an item deleted while the library stays open) and focus fell outside to
+// <body> should we refocus the first control inside the dialog.
+export function shouldRefocusIntoDialog(dialogContainsActive: boolean): boolean {
+  return !dialogContainsActive;
+}
+
 const snippetTotal = (lines: { quantity: number; material: number; hours: number; rate: number }[]) =>
   lines.reduce((s, l) => s + l.quantity * l.material + l.hours * l.rate, 0);
 
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+function Modal({ title, onClose, opener, launchRef, children }: {
+  title: string;
+  onClose: () => void;
+  opener: HTMLElement | null;
+  launchRef: React.RefObject<HTMLDivElement | null>;
+  children: React.ReactNode;
+}) {
   const ref = useRef<HTMLDivElement>(null);
+  // Keep the latest onClose without re-running the focus/restore effect on every
+  // parent or search render (the inline callback would otherwise re-focus and
+  // jump the keyboard position while typing in the library search box).
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  // The exact element that opened the dialog, captured at click time in the
+  // parent (the launcher stays mounted while the modal is open, so this remains
+  // connected and is the precise Save/Library initiator, never <body>).
+  const openerRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
+    openerRef.current = opener instanceof HTMLElement ? opener : null;
     const el = ref.current;
     const focusable = el?.querySelector<HTMLElement>('input, button, select, textarea, [tabindex]:not([tabindex="-1"])');
     focusable?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.stopPropagation(); onClose(); return; }
+      if (e.key === 'Escape') { e.stopPropagation(); onCloseRef.current(); return; }
       if (e.key === 'Tab' && el) {
         const items = [...el.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])')].filter(n => n.offsetParent !== null);
         if (!items.length) return;
         const first = items[0], last = items[items.length - 1];
-        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        const active = document.activeElement;
+        // Contain Tab when focus has fallen outside the dialog (e.g. a focused
+        // control was removed during a panel change like Save -> library): the
+        // first Tab should move focus back inside, not escape to the page.
+        if (!active || !el.contains(active)) { e.preventDefault(); first.focus(); return; }
+        if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
       }
     };
     document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      // On real close/unmount, restore keyboard focus to the exact opener so the
+      // user keeps their position. The launcher div stays mounted (inert while
+      // open), so the opener is still connected here; fall back only to the
+      // launcher's first focusable control, never a global arbitrary element or
+      // <body>.
+      const launchFallback = launchRef.current?.querySelector<HTMLElement>('a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])') ?? null;
+      const target = resolveFocusRestore(openerRef.current, launchFallback);
+      target?.focus();
+    };
+  }, []);
+  // Guarded open-dialog focus invariant: after every render, keep keyboard
+  // focus inside the dialog. If focus is already inside (e.g. the user is
+  // typing in the search box and the panel re-renders), do nothing so we never
+  // steal it. If the previously focused child was removed during a panel change
+  // (Save snippet -> library) and focus has fallen outside to <body>, move it
+  // back to the first appropriate control inside the dialog. This also covers
+  // an item being deleted while the library stays open.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const active = document.activeElement;
+    // Only refocus when the dialog does NOT contain the active element (i.e.
+    // focus fell outside during a panel change/item deletion). When focus is
+    // already inside the dialog (search typing), preserve it — never steal it.
+    if (!el || !shouldRefocusIntoDialog(!!active && el.contains(active))) return;
+    const focusable = el.querySelector<HTMLElement>('a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    focusable?.focus();
+  });
   return <div className="snippet-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
     <div className="snippet-modal" role="dialog" aria-modal="true" aria-label={title} ref={ref}>
       <div className="snippet-modal-head"><h2>{title}</h2><button className="icon-button" aria-label="Close snippet dialog" onClick={onClose}><X size={18}/></button></div>
@@ -54,6 +126,12 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 
 export default function ScopeSnippets({ lines, change }: { lines: Line[]; change: (lines: Line[]) => void }) {
   const [mode, setMode] = useState<PanelMode>('closed');
+  // The launcher div stays mounted at all times so the modal's opener button
+  // keeps its DOM identity (and stays connected) across open/close, letting
+  // focus restore land on the exact Save/Library initiator.
+  const launchRef = useRef<HTMLDivElement>(null);
+  // The precise element that opened the dialog, captured at click time.
+  const initiatorRef = useRef<HTMLElement | null>(null);
   const [snippets, setSnippets] = useState<Snippet[] | null>(null);
   const [loadError, setLoadError] = useState<SnippetError | null>(null);
   const [notice, setNotice] = useState('');
@@ -79,12 +157,16 @@ export default function ScopeSnippets({ lines, change }: { lines: Line[]; change
   const appendScopeMatches = pendingAppend ? findScopeMatches(pendingAppend, lines) : [];
 
   const openSave = () => {
+    initiatorRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setSelected(new Set(lines.map(l => l.id)));
     setName('');
     setError('');
     setMode('save');
   };
-  const openLibrary = () => { reload(); setQuery(''); setNotice(''); setError(''); setMode('library'); };
+  const openLibrary = () => {
+    initiatorRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    reload(); setQuery(''); setNotice(''); setError(''); setMode('library');
+  };
 
   const doSave = () => {
     if (!selectedLines.length) { setError('Select at least one line to save.'); return; }
@@ -115,15 +197,17 @@ export default function ScopeSnippets({ lines, change }: { lines: Line[]; change
     setNotice('Snippet deleted.');
   };
 
-  if (mode === 'closed') return <div className="snippet-launch no-print">
-    <button className="secondary" onClick={openSave} disabled={!lines.length}><Bookmark size={16}/>Save lines as snippet</button>
-    <button className="secondary" onClick={openLibrary}><Bookmark size={16}/>Snippet library</button>
-    {notice && <p role="status" className="fine-print">{notice}</p>}
-  </div>;
-
-  return <Modal
-    title={mode === 'save' ? 'Save lines as a snippet' : 'Snippet library'}
-    onClose={() => { setMode('closed'); setError(''); }}>
+  return <>
+    <div ref={launchRef} className="snippet-launch no-print" inert={mode !== 'closed'} aria-hidden={mode !== 'closed'}>
+      <button className="secondary" onClick={openSave} disabled={!lines.length}><Bookmark size={16}/>Save lines as snippet</button>
+      <button className="secondary" onClick={openLibrary}><Bookmark size={16}/>Snippet library</button>
+      {notice && <p role="status" className="fine-print">{notice}</p>}
+    </div>
+    {mode !== 'closed' && <Modal
+      title={mode === 'save' ? 'Save lines as a snippet' : 'Snippet library'}
+      onClose={() => { setMode('closed'); setError(''); }}
+      opener={initiatorRef.current}
+      launchRef={launchRef}>
     {mode === 'save' && <>
       {error && <p role="alert" className="snippet-error">{error}</p>}
       <label className="field"><span>Snippet name</span>
@@ -196,5 +280,6 @@ export default function ScopeSnippets({ lines, change }: { lines: Line[]; change
       </ul>
       {notice && <p role="status" className="fine-print">{notice}</p>}
     </>}
-  </Modal>;
+    </Modal>}
+  </>;
 }
