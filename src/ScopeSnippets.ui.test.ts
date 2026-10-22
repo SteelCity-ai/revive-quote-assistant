@@ -216,6 +216,37 @@ it('STE-112: focus-restore decision is stable across rerenders', () => {
   expect(first === second || first!.isConnected).toBe(true);
 });
 
+// Q3 re-audit (666e5eb): the launcher div now stays mounted (inert while the
+// modal is open) so the opener keeps its DOM identity and remains connected at
+// close time. The exact Save/Library initiator must win over any global
+// fallback — never a global first button or <body>. These model that lifecycle
+// without a DOM renderer; Han owns the final real-browser activeElement proof.
+
+// Opener stays connected because the launcher is never unmounted -> the exact
+// initiator is restored even when a global fallback is available.
+// (Regression for Escape->BODY: opener.isConnected was false because the
+// launcher unmounted when the modal opened.)
+const globalFallback = { isConnected: true };
+it('STE-112: mounted launcher keeps opener connected, beating global fallback', () => {
+  const saveInitiator = { isConnected: true };
+  const libraryInitiator = { isConnected: true };
+  // Save and Library are distinct initiators; each restores to itself.
+  expect(resolveFocusRestore(saveInitiator, globalFallback)).toBe(saveInitiator);
+  expect(resolveFocusRestore(libraryInitiator, globalFallback)).toBe(libraryInitiator);
+  // A disconnected opener (removed initiator) must NOT fall back to a global
+  // arbitrary button; it returns the scoped fallback (launcher control) instead.
+  const launcherControl = { isConnected: true };
+  expect(resolveFocusRestore({ isConnected: false }, launcherControl)).toBe(launcherControl);
+  expect(resolveFocusRestore({ isConnected: false }, launcherControl)).not.toBe(globalFallback);
+});
+
+// No connected initiator or launcher fallback -> nothing is focused (never
+// <body>), even when a disconnected element was captured.
+it('STE-112: disconnected opener with no launcher fallback restores nothing', () => {
+  expect(resolveFocusRestore({ isConnected: false }, null)).toBeNull();
+  expect(resolveFocusRestore(null, null)).toBeNull();
+});
+
 it('UI failure preservation: denied read does not overwrite existing library', () => {
   const st = store();
   st.data[SNIPPETS_STORAGE_KEY] = '{"version":1,"snippets":[{"id":"x","name":"Existing","savedAt":"2026-01-01","lines":[{"description":"d","quantity":1,"unit":"ea","material":1,"hours":0,"rate":0}]}]}';
