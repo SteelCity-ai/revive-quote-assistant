@@ -1,5 +1,5 @@
 // STE-104: snippet library UI — uses the exact STE-103 module API only.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Bookmark, Trash2, Plus, X, Search, Check } from 'lucide-react';
 import { money } from './domain';
 import type { Line } from './domain';
@@ -36,6 +36,16 @@ export function resolveFocusRestore<T extends { isConnected: boolean }>(
   return fallback;
 }
 
+// Open-dialog focus invariant (F7): while the dialog is open after a render,
+// keep keyboard focus inside the dialog. If focus is already inside (e.g. the
+// user is typing in the library search box), preserve it and do nothing. Only
+// when the previously focused child was removed (Save -> library panel change,
+// or an item deleted while the library stays open) and focus fell outside to
+// <body> should we refocus the first control inside the dialog.
+export function shouldRefocusIntoDialog(dialogContainsActive: boolean): boolean {
+  return !dialogContainsActive;
+}
+
 const snippetTotal = (lines: { quantity: number; material: number; hours: number; rate: number }[]) =>
   lines.reduce((s, l) => s + l.quantity * l.material + l.hours * l.rate, 0);
 
@@ -67,8 +77,13 @@ function Modal({ title, onClose, opener, launchRef, children }: {
         const items = [...el.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])')].filter(n => n.offsetParent !== null);
         if (!items.length) return;
         const first = items[0], last = items[items.length - 1];
-        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        const active = document.activeElement;
+        // Contain Tab when focus has fallen outside the dialog (e.g. a focused
+        // control was removed during a panel change like Save -> library): the
+        // first Tab should move focus back inside, not escape to the page.
+        if (!active || !el.contains(active)) { e.preventDefault(); first.focus(); return; }
+        if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
       }
     };
     document.addEventListener('keydown', onKey, true);
@@ -84,6 +99,23 @@ function Modal({ title, onClose, opener, launchRef, children }: {
       target?.focus();
     };
   }, []);
+  // Guarded open-dialog focus invariant: after every render, keep keyboard
+  // focus inside the dialog. If focus is already inside (e.g. the user is
+  // typing in the search box and the panel re-renders), do nothing so we never
+  // steal it. If the previously focused child was removed during a panel change
+  // (Save snippet -> library) and focus has fallen outside to <body>, move it
+  // back to the first appropriate control inside the dialog. This also covers
+  // an item being deleted while the library stays open.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const active = document.activeElement;
+    // Only refocus when the dialog does NOT contain the active element (i.e.
+    // focus fell outside during a panel change/item deletion). When focus is
+    // already inside the dialog (search typing), preserve it — never steal it.
+    if (!el || !shouldRefocusIntoDialog(!!active && el.contains(active))) return;
+    const focusable = el.querySelector<HTMLElement>('a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    focusable?.focus();
+  });
   return <div className="snippet-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
     <div className="snippet-modal" role="dialog" aria-modal="true" aria-label={title} ref={ref}>
       <div className="snippet-modal-head"><h2>{title}</h2><button className="icon-button" aria-label="Close snippet dialog" onClick={onClose}><X size={18}/></button></div>

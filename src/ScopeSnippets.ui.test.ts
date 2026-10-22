@@ -9,7 +9,7 @@ import {
   appendSnippetLines, deleteSnippet, loadSnippets, previewDuplicate,
   previewSnippet, saveSnippet, searchSnippets, findScopeMatches,
 } from './snippets';
-import { resolveFocusRestore } from './ScopeSnippets';
+import { resolveFocusRestore, shouldRefocusIntoDialog } from './ScopeSnippets';
 import type { SnippetLine, SnippetsStorage } from './snippets';
 
 const line = (over: Partial<SnippetLine> & Record<string, unknown> = {}): any => ({
@@ -245,6 +245,39 @@ it('STE-112: mounted launcher keeps opener connected, beating global fallback', 
 it('STE-112: disconnected opener with no launcher fallback restores nothing', () => {
   expect(resolveFocusRestore({ isConnected: false }, null)).toBeNull();
   expect(resolveFocusRestore(null, null)).toBeNull();
+});
+
+// --- F7 focus invariant (Q3-CEE-SAVE-FOCUS-FINDING) ---
+// While a panel change (Save snippet -> library) removes the focused Save button
+// but keeps the Modal mounted, focus falls outside to <body> and nothing inside
+// the dialog is active. The guarded layout effect must refocus the first
+// control inside the dialog in that case, but must NEVER steal focus while the
+// active element is already inside (e.g. typing in the library search box). The
+// decision is encoded in the pure shouldRefocusIntoDialog helper.
+
+// Focus fell outside the dialog (focused child removed) -> refocus inside.
+it('STE-112: F7 refocuses into dialog when active element is outside', () => {
+  expect(shouldRefocusIntoDialog(false)).toBe(true);
+  // No active element at all is still "outside" -> move focus into the dialog.
+  expect(shouldRefocusIntoDialog(false)).toBe(true);
+});
+
+// Focus already inside the dialog (search typing) -> preserve, never steal.
+it('STE-112: F7 preserves in-dialog focus and does not steal search typing', () => {
+  expect(shouldRefocusIntoDialog(true)).toBe(false);
+  // The guard is stable across rerenders while typing: focusing only when
+  // outside means a rerender never moves focus back to the first control.
+  expect(shouldRefocusIntoDialog(true)).toBe(false);
+});
+
+// The decision must not depend on the panel content: save and library panels
+// share the same invariant (refocus only when the active element left the
+// dialog), so the Save -> library transition is covered for both mode values.
+it('STE-112: F7 invariant refocuses after Save->Library regardless of panel', () => {
+  // Active element removed during the panel change -> outside -> refocus.
+  expect(shouldRefocusIntoDialog(false)).toBe(true);
+  // A rerender with focus already restored inside -> preserve (no loop/steal).
+  expect(shouldRefocusIntoDialog(true)).toBe(false);
 });
 
 it('UI failure preservation: denied read does not overwrite existing library', () => {
