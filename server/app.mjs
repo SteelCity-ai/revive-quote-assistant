@@ -7,6 +7,7 @@ import {createPortalHandler} from './portal.mjs';
 import {createRoofMeasurer} from './roof.mjs';
 import {createVoiceHandler} from './voice.mjs';
 import {createTypeSafeHandler} from './typesafe.mjs';
+import {clientAddress} from './identity.mjs';
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.webmanifest':'application/manifest+json','.woff2':'font/woff2','.ico':'image/x-icon'};
 const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
 export function createApp({env=process.env,fetcher=fetch,generate=generateEstimate,staticDir=resolve('dist')}={}){
@@ -14,12 +15,20 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
   if(production&&(!env.APP_ORIGIN||new URL(env.APP_ORIGIN).protocol!=='https:'||new URL(env.APP_ORIGIN).origin!==env.APP_ORIGIN))throw new Error('Production requires an exact HTTPS APP_ORIGIN.');
   const hosts=['localhost','127.0.0.1',...Object.values(os.networkInterfaces()).flat().filter(a=>a?.family==='IPv4').map(a=>a.address)];
   const origins=new Set(production?[env.APP_ORIGIN]:hosts.map(host=>`http://${host}:4178`));
-  const portal=createPortalHandler({baseUrl:env.PORTAL_API_URL||'https://portal.reviverepairco.com/api/v1',origins,fetcher,secureCookies:production});
+  const trustProxy=env.TRUST_PROXY_HEADERS!=='false';
+  const portal=createPortalHandler({baseUrl:env.PORTAL_API_URL||'https://portal.reviverepairco.com/api/v1',origins,fetcher,secureCookies:production,trustProxy});
   const measureRoof=createRoofMeasurer({fetcher,apiKey:env.GOOGLE_SOLAR_API_KEY||''});
   const roofWindows=new Map();
   const voice=createVoiceHandler({env,fetcher,authenticate:portal.authenticate,origins});
   const typesafe=createTypeSafeHandler({env,fetcher,authenticate:portal.authenticate,origins});
-  const windows=new Map();let running=false;
+  // Per-purpose limit maps and independent concurrency slots (ADR 0001).
+  const publicWindows=new Map(),adminWindows=new Map();
+  const slots={public:false,admin:false};
+  const globalCap=Number(env.GLOBAL_HOURLY_GENERATION_CAP||200);
+  let globalTimes=[];
+  const prune=(map,now,windowMs)=>{for(const [id,times] of map)if(times.every(t=>now-t>=windowMs))map.delete(id);};
+  const recent=(map,id,now,windowMs)=>(map.get(id)||[]).filter(t=>now-t<windowMs);
+  const globalRecent=now=>{globalTimes=globalTimes.filter(t=>now-t<3600000);return globalTimes.length;};
   const server=http.createServer(async(req,res)=>{
     res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');
     res.setHeader('X-Frame-Options','DENY');res.setHeader('Permissions-Policy','camera=(), microphone=(self), geolocation=()');
@@ -33,16 +42,16 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
       if(req.url==='/api/roof/measure'&&req.method==='POST'){
         if(!origins.has(req.headers.origin))return json(res,403,{error:'Request origin not allowed.'});
         if(!req.headers['content-type']?.startsWith('application/json'))return json(res,415,{error:'Use application/json.'});
-        let identity=req.socket.remoteAddress;
+        let identity=clientAddress(req,{trustProxy});
         if(production){const user=await portal.authenticate(req);identity=user.userId||user.id||user.email;if(!identity)return json(res,403,{error:'Your portal account is missing an identity.'});}
         if(!measureRoof)return json(res,503,{error:'Roof measurement is not configured on the server.'});
-        const now=Date.now();for(const [id,times] of roofWindows)if(times.every(t=>now-t>=3600000))roofWindows.delete(id);
-        const recent=(roofWindows.get(identity)||[]).filter(t=>now-t<3600000);
-        if(recent.length>=30)return json(res,429,{error:'Too many measurement requests this hour. Please wait before retrying.'});
+        const now=Date.now();prune(roofWindows,now,3600000);
+        const recentRoof=recent(roofWindows,identity,now,3600000);
+        if(recentRoof.length>=30)return json(res,429,{error:'Too many measurement requests this hour. Please wait before retrying.'});
         let bytes=0;const chunks=[];for await(const chunk of req){bytes+=chunk.length;if(bytes>2000)return json(res,413,{error:'The address is too long.'});chunks.push(chunk);}
         let body;try{body=JSON.parse(Buffer.concat(chunks).toString());}catch{return json(res,400,{error:'Invalid request.'});}
         if(typeof body.address!=='string'||!body.address.trim())return json(res,400,{error:'Enter the job address before requesting a measurement.'});
-        roofWindows.set(identity,[...recent,now]);
+        roofWindows.set(identity,[...recentRoof,now]);
         const result=await measureRoof(body.address);
         if(!result.available)return json(res,422,result);
         return json(res,200,result);
@@ -53,9 +62,9 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
         if(!env.OPENAI_API_KEY)return json(res,503,{error:'Instant estimates are not configured yet. Please call us for a quote.'});
         if(production&&!origins.has(req.headers.origin))return json(res,403,{error:'Request origin not allowed.'});
         if(!req.headers['content-type']?.startsWith('application/json'))return json(res,415,{error:'Use application/json.'});
-        const now=Date.now();for(const [id,times] of roofWindows)if(times.every(t=>now-t>=3600000))roofWindows.delete(id);
-        const identity=req.socket.remoteAddress||'unknown';
-        const seen=(roofWindows.get(identity)||[]).filter(t=>now-t<3600000);
+        const now=Date.now();prune(publicWindows,now,3600000);
+        const identity=clientAddress(req,{trustProxy});
+        const seen=recent(publicWindows,identity,now,3600000);
         if(seen.length>=3)return json(res,429,{error:'Too many instant estimates from this address this hour. Please call us instead.'});
         let bytes=0;const chunks=[];for await(const chunk of req){bytes+=chunk.length;if(bytes>2000)return json(res,413,{error:'Request too large.'});chunks.push(chunk);}
         let body;try{body=JSON.parse(Buffer.concat(chunks).toString());}catch{return json(res,400,{error:'Invalid request.'});}
@@ -72,8 +81,9 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
         if(!area)return json(res,422,{error:'We could not measure this roof automatically. Please call us with your measurements for a quote.'});
         const pricing={laborRate:0,markup:15,contingency:0,tax:0};
         const input=inputSchema.parse({type:'roofing',answers:{address,roofWork:work,roofSystem:String(body.roofSystem||'Other / not decided').slice(0,120),roofArea:String(area)},pricing,area});
-        if(running)return json(res,429,{error:'An estimate is being prepared. Please retry in a moment.'});
-        running=true;roofWindows.set(identity,[...seen,now]);
+        if(slots.public)return json(res,429,{error:'An estimate is being prepared. Please retry in a moment.'});
+        if(globalRecent(now)>=globalCap)return json(res,429,{error:'The estimate service is busy right now. Please call us instead.'});
+        slots.public=true;publicWindows.set(identity,[...seen,now]);globalTimes.push(now);
         const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),240000);
         try{
           const report=await generate(input,{apiKey:env.OPENAI_API_KEY,baseUrl:env.OPENAI_BASE_URL||'https://api.openai.com/v1',model:env.OPENAI_MODEL||'gpt-4.1',estimateModel:env.OPENAI_ESTIMATE_MODEL||'gpt-5.4-mini-2026-03-17',signal:controller.signal});
@@ -86,30 +96,29 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
           try{const {appendFile,mkdir}=await import('node:fs/promises');if(env.LEADS_DIR){await mkdir(env.LEADS_DIR,{recursive:true}).catch(()=>{});await appendFile(resolve(env.LEADS_DIR,'instant.jsonl'),JSON.stringify({at:new Date().toISOString(),address,roofWork:work,area,total})+'\n').catch(()=>{});}}catch{}
           return json(res,200,{summary:report.summary,total,marketLow:report.marketRange?.low??null,marketMid:report.marketRange?Math.round(((report.marketRange.low+report.marketRange.high)/2)*100)/100:null,marketHigh:report.marketRange?.high??null,measuredNote,assumptions:report.assumptions.slice(0,6),followUps:report.questions.slice(0,4)});
         }catch{if(!res.destroyed)json(res,502,{error:'The instant estimate could not be completed. Please call us and we will quote it directly.'});}
-        finally{clearTimeout(timeout);running=false;}
+        finally{clearTimeout(timeout);slots.public=false;}
         return;
       }
 
       if(req.url==='/api/ai/estimate'&&req.method==='POST'){
         if(!origins.has(req.headers.origin))return json(res,403,{error:'Request origin not allowed.'});
         if(!req.headers['content-type']?.startsWith('application/json'))return json(res,415,{error:'Use application/json.'});
-        let identity=req.socket.remoteAddress;
+        let identity=clientAddress(req,{trustProxy});
         if(production){const user=await portal.authenticate(req);identity=user.userId||user.id||user.email;if(!identity)return json(res,403,{error:'Your portal account is missing an identity.'});}
         if(!env.OPENAI_API_KEY)return json(res,503,{error:'The AI key is not configured on the server.'});
-        if(running)return json(res,429,{error:'An estimate is already being prepared. Please wait before retrying.'});
-        const now=Date.now();for(const [id,times] of windows)if(times.every(t=>now-t>=3600000))windows.delete(id);
-        if((windows.get(identity)||[]).filter(t=>now-t<3600000).length>=12)return json(res,429,{error:'Your account has reached its hourly generation limit. Try again later.'});
+        const now=Date.now();prune(adminWindows,now,3600000);
+        if(recent(adminWindows,identity,now,3600000).length>=12)return json(res,429,{error:'Your account has reached its hourly generation limit. Try again later.'});
+        if(slots.admin)return json(res,429,{error:'An estimate is already being prepared. Please wait before retrying.'});
         let bytes=0;const chunks=[];for await(const chunk of req){bytes+=chunk.length;if(bytes>100000)return json(res,413,{error:'Job details are too large. Please shorten the notes.'});chunks.push(chunk);}
         let input;try{input=inputSchema.parse(JSON.parse(Buffer.concat(chunks).toString()));}catch{return json(res,400,{error:'Some job information is invalid. Check the answers and pricing settings.'});}
         if(typeof input.answers.address!=='string'||!input.answers.address.trim())return json(res,400,{error:'Enter the job address before requesting local research.'});
-        if(running)return json(res,429,{error:'An estimate is already being prepared. Please wait before retrying.'});
-        const recent=(windows.get(identity)||[]).filter(t=>Date.now()-t<3600000);if(recent.length>=12)return json(res,429,{error:'Your account has reached its hourly generation limit. Try again later.'});
-        running=true;windows.set(identity,[...recent,Date.now()]);
+        const seen=recent(adminWindows,identity,now,3600000);
+        slots.admin=true;adminWindows.set(identity,[...seen,now]);globalTimes.push(now);
         const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),240000);
         res.on('close',()=>{if(!res.writableEnded)controller.abort();});
         try{const estimate=await generate(input,{apiKey:env.OPENAI_API_KEY,baseUrl:env.OPENAI_BASE_URL||'http://127.0.0.1:8790/v1',model:env.OPENAI_MODEL||'gpt-4.1',estimateModel:env.OPENAI_ESTIMATE_MODEL||'gpt-5.4-mini-2026-03-17',signal:controller.signal});if(!res.destroyed)json(res,200,estimate);}
         catch{if(!res.destroyed)json(res,502,{error:controller.signal.aborted?'Research timed out. Your existing quote is unchanged. Please retry.':'Estimate generation failed. Your existing quote is unchanged. Please retry.'});}
-        finally{clearTimeout(timeout);running=false;}
+        finally{clearTimeout(timeout);slots.admin=false;}
         return;
       }
       if(req.url?.startsWith('/api/'))return json(res,404,{error:'Not found'});
