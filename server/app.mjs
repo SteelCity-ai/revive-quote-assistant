@@ -3,6 +3,7 @@ import os from 'node:os';
 import {readFile} from 'node:fs/promises';
 import {resolve,extname,sep} from 'node:path';
 import {inputSchema,generateEstimate} from './estimate.mjs';
+import {recordGeneration,errorCodeFor} from './audit.mjs';
 import {createPortalHandler} from './portal.mjs';
 import {createRoofMeasurer} from './roof.mjs';
 import {createVoiceHandler} from './voice.mjs';
@@ -39,7 +40,7 @@ const readContact=body=>{
   fields.email=fields.email.toLowerCase();
   return {...fields,present:Boolean(fields.name||fields.email||fields.phone)};
 };
-export function createApp({env=process.env,fetcher=fetch,generate=generateEstimate,staticDir=resolve('dist'),cacheTtlMs=INSTANT_CACHE_TTL_MS,now=Date.now}={}){
+export function createApp({env=process.env,fetcher=fetch,generate=generateEstimate,audit=recordGeneration,staticDir=resolve('dist'),cacheTtlMs=INSTANT_CACHE_TTL_MS,now=Date.now}={}){
   const production=env.NODE_ENV==='production';
   if(production&&(!env.APP_ORIGIN||new URL(env.APP_ORIGIN).protocol!=='https:'||new URL(env.APP_ORIGIN).origin!==env.APP_ORIGIN))throw new Error('Production requires an exact HTTPS APP_ORIGIN.');
   const hosts=['localhost','127.0.0.1',...Object.values(os.networkInterfaces()).flat().filter(a=>a?.family==='IPv4').map(a=>a.address)];
@@ -57,6 +58,11 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
   let globalTimes=[];
   const cacheTtl=Number.isFinite(cacheTtlMs)&&cacheTtlMs>0?cacheTtlMs:INSTANT_CACHE_TTL_MS;
   const clock=typeof now==='function'?now:Date.now;
+  // Audit writes are fire-and-forget: a slow or failing disk must never delay or
+  // change an HTTP response. recordGeneration already swallows its own errors.
+  const auditDir=env.AUDIT_DIR;
+  const writeAudit=entry=>{try{Promise.resolve(audit(entry,{dir:auditDir})).catch(()=>{});}catch{}};
+  const auditModels=()=>({model:env.OPENAI_MODEL||'gpt-4.1',estimateModel:env.OPENAI_ESTIMATE_MODEL||'gpt-5.4-mini-2026-03-17'});
   const instantCache=new Map();
   const cacheGet=key=>{const entry=instantCache.get(key);if(!entry)return null;if(entry.expiresAt<=clock()){instantCache.delete(key);return null;}return entry;};
   const cacheSet=(key,payload)=>{
@@ -143,6 +149,7 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
         if(globalRecent(now)>=globalCap)return json(res,429,{error:'The estimate service is busy right now. Please call us instead.'});
         slots.public=true;publicWindows.set(identity,[...seen,now]);globalTimes.push(now);
         const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),240000);
+        const startedAt=Date.now();
         try{
           const report=await generate(input,{apiKey:env.OPENAI_API_KEY,baseUrl:env.OPENAI_BASE_URL||'https://api.openai.com/v1',model:env.OPENAI_MODEL||'gpt-4.1',estimateModel:env.OPENAI_ESTIMATE_MODEL||'gpt-5.4-mini-2026-03-17',signal:controller.signal});
           const materials=report.items.reduce((sum,i)=>sum+(i.category!=='labor'?i.quantity*i.unitCost:0),0);
@@ -154,8 +161,12 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
           const payload={summary:report.summary,total,marketLow:report.marketRange?.low??null,marketMid:report.marketRange?Math.round(((report.marketRange.low+report.marketRange.high)/2)*100)/100:null,marketHigh:report.marketRange?.high??null,measuredNote,assumptions:report.assumptions.slice(0,6),followUps:report.questions.slice(0,4)};
           cacheSet(cacheKey,payload);
           await writeInstantLead(env,{...lead,total});
+          writeAudit({at:new Date().toISOString(),route:'instant',outcome:'success',...auditModels(),durationMs:report.durationMs??Date.now()-startedAt,usage:report.usage,itemCount:Array.isArray(report.items)?report.items.length:undefined,total});
           return json(res,200,{...payload,cached:false,cachedAt:null});
-        }catch{if(!res.destroyed)json(res,502,{error:'The instant estimate could not be completed. Please call us and we will quote it directly.'});}
+        }catch(error){
+          writeAudit({at:new Date().toISOString(),route:'instant',outcome:'failure',errorCode:errorCodeFor(error),...auditModels(),durationMs:Date.now()-startedAt});
+          if(!res.destroyed)json(res,502,{error:'The instant estimate could not be completed. Please call us and we will quote it directly.'});
+        }
         finally{clearTimeout(timeout);slots.public=false;}
         return;
       }
@@ -176,8 +187,18 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
         slots.admin=true;adminWindows.set(identity,[...seen,now]);globalTimes.push(now);
         const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),240000);
         res.on('close',()=>{if(!res.writableEnded)controller.abort();});
-        try{const estimate=await generate(input,{apiKey:env.OPENAI_API_KEY,baseUrl:env.OPENAI_BASE_URL||'http://127.0.0.1:8790/v1',model:env.OPENAI_MODEL||'gpt-4.1',estimateModel:env.OPENAI_ESTIMATE_MODEL||'gpt-5.4-mini-2026-03-17',signal:controller.signal});if(!res.destroyed)json(res,200,estimate);}
-        catch{if(!res.destroyed)json(res,502,{error:controller.signal.aborted?'Research timed out. Your existing quote is unchanged. Please retry.':'Estimate generation failed. Your existing quote is unchanged. Please retry.'});}
+        const startedAt=Date.now();
+        try{
+          const estimate=await generate(input,{apiKey:env.OPENAI_API_KEY,baseUrl:env.OPENAI_BASE_URL||'http://127.0.0.1:8790/v1',model:env.OPENAI_MODEL||'gpt-4.1',estimateModel:env.OPENAI_ESTIMATE_MODEL||'gpt-5.4-mini-2026-03-17',signal:controller.signal});
+          writeAudit({at:new Date().toISOString(),route:'ai',outcome:'success',...auditModels(),durationMs:estimate?.durationMs??Date.now()-startedAt,usage:estimate?.usage,itemCount:Array.isArray(estimate?.items)?estimate.items.length:undefined});
+          // Audit-only fields stay server-side; the estimate payload is unchanged.
+          const {usage:_usage,durationMs:_durationMs,...clientEstimate}=estimate??{};
+          if(!res.destroyed)json(res,200,clientEstimate);
+        }
+        catch(error){
+          writeAudit({at:new Date().toISOString(),route:'ai',outcome:'failure',errorCode:errorCodeFor(error),...auditModels(),durationMs:Date.now()-startedAt});
+          if(!res.destroyed)json(res,502,{error:controller.signal.aborted?'Research timed out. Your existing quote is unchanged. Please retry.':'Estimate generation failed. Your existing quote is unchanged. Please retry.'});
+        }
         finally{clearTimeout(timeout);slots.admin=false;}
         return;
       }
