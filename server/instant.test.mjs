@@ -111,3 +111,52 @@ it('never caches a failed estimate',async()=>{
     expect(calls).toBe(2);
   }finally{await new Promise(r=>server.close(r));await rm(dir,{recursive:true,force:true});}
 });
+
+it('stops the paid generation and frees the public slot when the visitor disconnects',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'revive-instant-cancel-'));
+  const signals=[];
+  let calls=0;
+  const server=createApp({env:{OPENAI_API_KEY:'test-only',LEADS_DIR:dir,AUDIT_DIR:dir},generate:(input,opts)=>{
+    calls++;
+    if(calls>1)return Promise.resolve(report);
+    signals.push(opts.signal);
+    return new Promise((_resolve,reject)=>{
+      const fail=()=>{const error=new Error('The operation was aborted.');error.name='AbortError';reject(error);};
+      if(opts.signal.aborted)fail();else opts.signal.addEventListener('abort',fail,{once:true});
+    });
+  }});
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  const baseUrl=`http://127.0.0.1:${server.address().port}`;
+  const waitFor=async(check,ms=5000)=>{const until=Date.now()+ms;while(Date.now()<until){if(await check())return true;await new Promise(r=>setTimeout(r,25));}return false;};
+  try{
+    const controller=new AbortController();
+    const pending=fetch(baseUrl+'/api/instant/estimate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(base),signal:controller.signal}).catch(()=>null);
+    expect(await waitFor(()=>signals.length===1)).toBe(true);
+    controller.abort();
+    await pending;
+    // The server must abort the upstream call itself, not merely lose the socket.
+    expect(await waitFor(()=>signals[0]?.aborted===true)).toBe(true);
+    expect(calls).toBe(1);
+    // The cancellation is recorded with its own short code, not a generic failure.
+    const cancelled=await waitFor(async()=>{
+      try{const lines=(await readFile(join(dir,'generations.jsonl'),'utf8')).trim().split('\n').filter(Boolean).map(line=>JSON.parse(line));
+        return lines.some(line=>line.route==='instant'&&line.outcome==='failure'&&line.errorCode==='client_cancelled');}catch{return false;}
+    });
+    expect(cancelled).toBe(true);
+    // The single public generation slot must be free again immediately.
+    const second=await post(baseUrl,{...base,address:'2 Test Street, Harrisburg, PA 17101'});
+    expect(second.status).toBe(200);
+    expect((await second.json()).total).toBe(375);
+  }finally{await new Promise(r=>server.close(r));await rm(dir,{recursive:true,force:true});}
+});
+
+it('keeps the slot and does not abort when the estimate finishes normally',async()=>{
+  let calls=0;let aborted=false;
+  const {server,dir,baseUrl}=await start({generate:async(_input,opts)=>{calls++;opts.signal.addEventListener('abort',()=>{aborted=true;},{once:true});return report;}});
+  try{
+    expect((await post(baseUrl,base)).status).toBe(200);
+    expect(await new Promise(r=>setTimeout(()=>r(aborted),50))).toBe(false);
+    expect((await post(baseUrl,{...base,address:'3 Test Street, Harrisburg, PA 17101'})).status).toBe(200);
+    expect(calls).toBe(2);
+  }finally{await new Promise(r=>server.close(r));await rm(dir,{recursive:true,force:true});}
+});

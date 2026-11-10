@@ -10,3 +10,6 @@
 .portal-lifecycle a{margin:6px 12px 0 0}
 .sign-in-shell{max-width:520px;margin:48px auto;padding:0 20px 48px}.sign-in-shell>p{margin:16px 0 24px;color:#526577}.sign-in-shell h1{font-size:clamp(26px,6vw,36px)}
 .portal-connection .field>input{display:block;width:100%;min-height:48px;border:1px solid #b9c9d4;border-radius:8px;padding:12px;font:inherit;font-size:16px;background:white;color:#143853;box-sizing:border-box}
+.wait-panel{margin:14px 0;padding:14px 16px;border:1px solid #cde0df;border-radius:10px;background:#f2f8f7;color:#2f5f63}
+.wait-panel p{font-size:12px;line-height:1.6;margin:0}
+.wait-panel p+p{margin-top:8px;color:#1f5350}

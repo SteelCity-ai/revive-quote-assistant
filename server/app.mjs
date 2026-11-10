@@ -150,6 +150,12 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
         slots.public=true;publicWindows.set(identity,[...seen,now]);globalTimes.push(now);
         const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),240000);
         const startedAt=Date.now();
+        // If the visitor closes the page or stops waiting, stop paying for the
+        // upstream generation immediately instead of holding the single public
+        // slot for up to four minutes. The slot is released in `finally`.
+        let clientGone=false;
+        const onClose=()=>{if(!res.writableEnded){clientGone=true;controller.abort();}};
+        res.on('close',onClose);
         try{
           const report=await generate(input,{apiKey:env.OPENAI_API_KEY,baseUrl:env.OPENAI_BASE_URL||'https://api.openai.com/v1',model:env.OPENAI_MODEL||'gpt-4.1',estimateModel:env.OPENAI_ESTIMATE_MODEL||'gpt-5.4-mini-2026-03-17',signal:controller.signal});
           const materials=report.items.reduce((sum,i)=>sum+(i.category!=='labor'?i.quantity*i.unitCost:0),0);
@@ -164,10 +170,10 @@ export function createApp({env=process.env,fetcher=fetch,generate=generateEstima
           writeAudit({at:new Date().toISOString(),route:'instant',outcome:'success',...auditModels(),durationMs:report.durationMs??Date.now()-startedAt,usage:report.usage,itemCount:Array.isArray(report.items)?report.items.length:undefined,total});
           return json(res,200,{...payload,cached:false,cachedAt:null});
         }catch(error){
-          writeAudit({at:new Date().toISOString(),route:'instant',outcome:'failure',errorCode:errorCodeFor(error),...auditModels(),durationMs:Date.now()-startedAt});
+          writeAudit({at:new Date().toISOString(),route:'instant',outcome:'failure',errorCode:clientGone?'client_cancelled':errorCodeFor(error),...auditModels(),durationMs:Date.now()-startedAt});
           if(!res.destroyed)json(res,502,{error:'The instant estimate could not be completed. Please call us and we will quote it directly.'});
         }
-        finally{clearTimeout(timeout);slots.public=false;}
+        finally{clearTimeout(timeout);res.removeListener('close',onClose);slots.public=false;}
         return;
       }
 
