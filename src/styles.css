@@ -114,3 +114,11 @@
 .quote-empty{padding:34px 18px}
 .quote-empty .text-button{margin-top:10px}
 @media(max-width:640px){.quote-search input{font-size:16px}.quote-filters button{min-height:40px}}
+
+/* Duplicate draft action (STE-471) */
+.quote-row{padding:0;overflow:hidden}
+.quote-row__open{flex:1;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:16px;text-align:left;background:none;border:0;color:inherit;padding:21px;min-height:44px}
+.quote-row__open:hover{background:#fbfdfd}
+.quote-row__copy{display:grid;place-items:center;width:52px;min-height:44px;align-self:stretch;border:0;border-left:1px solid var(--border);background:#fbfcfd;color:#5c6f7c;padding:0}
+.quote-row__copy:hover{background:#eef5f4;color:var(--teal)}
+@media(max-width:640px){.quote-row__open{padding:16px}.quote-row__copy{width:48px}}
