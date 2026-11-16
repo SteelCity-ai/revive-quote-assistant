@@ -45,18 +45,6 @@ export function copyTitle(title: string, existing: Quote[]): string {
   return candidate;
 }
 
-/** True when a quote with the same customer, title and line set already exists. */
-export function hasSimilarDraft(quote: Quote, existing: Quote[]): boolean {
-  const key = (q: Quote): string => JSON.stringify({
-    type: q.type,
-    title: String(q.answers.title ?? '').trim().toLowerCase(),
-    customer: String(q.answers.customer ?? '').trim().toLowerCase(),
-    lines: q.lines.map(l => [l.description, l.quantity, l.unit, l.material, l.hours, l.rate]),
-  });
-  const target = key(quote);
-  return existing.some(q => q.id !== quote.id && key(q) === target);
-}
-
 /**
  * Create a new unapproved draft from an existing quote.
  * Returns a fresh object; the source quote is untouched.

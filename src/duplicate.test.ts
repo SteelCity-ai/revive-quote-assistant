@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { copyTitle, duplicateQuote, hasSimilarDraft } from './duplicate';
+import { copyTitle, duplicateQuote } from './duplicate';
 import { defaults, makeQuote, totals } from './domain';
 import type { Quote } from './domain';
 
@@ -109,20 +109,5 @@ describe('copyTitle', () => {
   it('trims whitespace and ignores blank titles', () => {
     expect(copyTitle('   ', [])).toBe('Untitled quote (copy)');
     expect(copyTitle('  Deck rebuild  ', [])).toBe('Deck rebuild (copy)');
-  });
-});
-
-describe('hasSimilarDraft', () => {
-  it('detects an identical draft and ignores the quote itself', () => {
-    const src = source();
-    const copy = duplicateQuote(src);
-    expect(hasSimilarDraft(src, [src])).toBe(false);
-    expect(hasSimilarDraft({ ...copy, answers: { ...copy.answers, title: src.answers.title } }, [src])).toBe(true);
-  });
-
-  it('does not flag a quote with different lines', () => {
-    const src = source();
-    const other = source({ id: 'other', lines: [line('z1', 'Flooring', 3, 10, 2, 65)] });
-    expect(hasSimilarDraft(other, [src])).toBe(false);
   });
 });
