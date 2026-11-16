@@ -260,3 +260,36 @@ export function loadQuoteHistory(quoteId: string, storage?: HistoryStorage): His
   const { snapshots, error } = loadHistory(storage);
   return { snapshots: snapshots.filter(s => s.quoteId === quoteId).slice(-MAX_SNAPSHOTS), error };
 }
+
+/**
+ * Delete every stored checkpoint for one quote.
+ *
+ * Removing a quote from the device used to leave its full snapshot copies
+ * behind under HISTORY_KEY — unreachable from the UI, wasting storage and
+ * keeping deleted customer/address/price data indefinitely. Other quotes'
+ * history is preserved. Unreadable or full storage is reported and left
+ * untouched rather than overwritten.
+ */
+export function deleteQuoteHistory(quoteId: string, storage: HistoryStorage = typeof localStorage === 'undefined' ? undefined as unknown as HistoryStorage : localStorage): string {
+  const existing = loadHistory(storage);
+  if (existing.error) return existing.error;
+  const remaining = existing.snapshots.filter(s => s.quoteId !== quoteId);
+  if (remaining.length === existing.snapshots.length) return '';
+  return saveHistory(remaining, storage);
+}
+
+/**
+ * Drop checkpoints whose quote no longer exists on this device (deleted before
+ * history cleanup existed, or removed in another tab). Live quotes keep their
+ * history. Returns how many entries were removed; makes no write when clean.
+ */
+export function pruneOrphanHistory(liveQuoteIds: readonly string[], storage: HistoryStorage = typeof localStorage === 'undefined' ? undefined as unknown as HistoryStorage : localStorage): { removed: number; error: string } {
+  const existing = loadHistory(storage);
+  if (existing.error) return { removed: 0, error: existing.error };
+  const live = new Set(liveQuoteIds);
+  const remaining = existing.snapshots.filter(s => live.has(s.quoteId));
+  const removed = existing.snapshots.length - remaining.length;
+  if (!removed) return { removed: 0, error: '' };
+  const error = saveHistory(remaining, storage);
+  return { removed: error ? 0 : removed, error };
+}
