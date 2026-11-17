@@ -1,5 +1,5 @@
 import { z } from 'zod';
-const number = z.number().finite().min(0).max(1e8);
+const number = z.number().min(0).max(1e8);
 const text = z.string().max(6000);
 export const inputSchema = z.object({ type: z.enum(['renovation','roofing','contracting']), answers: z.record(z.string(), z.union([z.string().max(6000),z.array(z.string().max(200)).max(30)])).refine(a => Object.keys(a).length <= 60), pricing: z.object({laborRate:number,markup:number.max(1000),contingency:number.max(100),tax:number.max(100)}), area: number.nullable() });
 export const itemSchema = z.object({description:text,category:z.enum(['material','labor','equipment','disposal','subcontract','permit']),quantity:number.positive(),unit:z.enum(['allowance','sq ft','linear ft','each','square','day']),unitCost:number,laborHours:number,hourlyRate:number,basis:z.enum(['listed-price','published-range','estimated-allowance']),sourceIds:z.array(z.string()).max(12),rationale:text});
