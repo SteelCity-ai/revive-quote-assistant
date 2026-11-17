@@ -100,3 +100,26 @@
 @media (max-width:480px){.diff-values{flex-direction:row;flex-wrap:wrap}.diff-value{flex:1 1 100%;max-width:100%}}
 .history-diff small{color:var(--muted)}
 @media(max-width:640px){.history-panel{padding:14px}.history-item-head{flex-direction:column;gap:2px}}
+
+/* Quote list search and status filters (Home) */
+.quote-tools{display:grid;gap:10px;margin-bottom:16px}
+.quote-search{display:flex;align-items:center;gap:9px;border:1px solid #cfd9e0;border-radius:9px;background:#fff;padding:0 12px;color:#7b8b96}
+.quote-search:focus-within{outline:2px solid #72b8b0;outline-offset:2px}
+.quote-search input{flex:1;min-width:0;border:0;outline:none!important;background:transparent;padding:12px 0;font-size:14px;color:var(--navy)}
+.quote-filters{display:flex;gap:7px;flex-wrap:wrap}
+.quote-filters button{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:#fff;color:#4d6270;border-radius:999px;padding:7px 12px;font-size:12px;font-weight:600;min-height:36px}
+.quote-filters button span{font-size:10px;color:var(--muted);font-weight:650}
+.quote-filters button.selected{border-color:var(--teal);background:#f1f9f6;color:#0c6b64}
+.quote-filters button.selected span{color:#0c6b64}
+.quote-empty{padding:34px 18px}
+.quote-empty .text-button{margin-top:10px}
+@media(max-width:640px){.quote-search input{font-size:16px}.quote-filters button{min-height:40px}}
+
+/* Duplicate draft action (STE-471) */
+.quote-row{padding:0;overflow:hidden}
+.quote-row__open{flex:1;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:16px;text-align:left;background:none;border:0;color:inherit;padding:21px;min-height:44px}
+.quote-row__open:hover{background:#fbfdfd}
+.quote-row__copy{display:grid;place-items:center;width:52px;min-height:44px;align-self:stretch;border:0;border-left:1px solid var(--border);background:#fbfcfd;color:#5c6f7c;padding:0}
+.quote-row__copy:hover{background:#eef5f4;color:var(--teal)}
+@media(max-width:640px){.quote-row__open{padding:16px}.quote-row__copy{width:48px}}
+.quote-status-portal{color:var(--teal)}.quote-status-accepted{color:#27734e}.quote-status-approved{color:#617180}.quote-status-unsaved{color:#916d35}.quote-status-changed{color:#9a6a1f}.quote-status-superseded{color:#9d3434}
