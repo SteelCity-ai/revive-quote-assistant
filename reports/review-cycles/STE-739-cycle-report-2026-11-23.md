@@ -49,3 +49,17 @@ Han returns PASS or numbered findings at this SHA. The merge queue (#26, #27, #2
 ## In plain English
 
 The quote app sent the entire program — all screens, the quote editor, the history and the snippet library — to the phone before the saved-quote list could appear. On a weak signal in a driveway, that is the slowest part of using it. I split the app so the phone first downloads only the list screen, and the other screens arrive when someone opens them. The first download is now about a quarter smaller (111 kB to 86 kB compressed), and all 228 automatic tests still pass. A tester is checking that every screen still opens properly on desktop and phone. Nothing is merged or deployed, and nothing is needed from you.
+
+## F1 correction (after Han QA at e5c2607)
+
+Han's acceptance at `e5c260745bdfa6b204cbfd21de2c135b78fadc3b` found one Low defect: `DraftImport` was rendered as `{importOpen&&…}` *after* `</Suspense>`, so the first "Import drafts" open showed no `Loading…` placeholder while the chunk downloaded.
+
+Fix at `392ffbca9a8593ad0cf22b23c90bf3be37f2086f` (`codex/STE-739`): that render moved inside the existing `Suspense` boundary. One line, `src/AIApp.tsx` only. No change to lazy imports, chunk split, data, pricing, approval, storage, portal protocol, history, snippets or import validation.
+
+Verification in the clean `STE-739` worktree with the branch lockfile:
+
+- `npx tsc -b` exit 0.
+- `npx vitest run` — 22 files, 228 passed, 0 failed.
+- `npx vite build` exit 0; entry JS **276.12 kB / 86.41 kB gzip**, chunks unchanged (`Review` 57.08/16.17, `Estimate` 13.33/4.29, `DraftImport` 12.38/4.67, `Guide` 6.97/2.87, `Settings` 4.28/1.81).
+
+Pushed with the protected helper to `codex/STE-739`. Remaining gate: Han re-runs check 5 (import placeholder) and check 8 (first-use chunk) at the new head. Not claimed: no merge, deploy, release acceptance or authenticated production check.
