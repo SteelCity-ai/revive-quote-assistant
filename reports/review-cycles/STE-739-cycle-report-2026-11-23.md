@@ -63,3 +63,22 @@ Verification in the clean `STE-739` worktree with the branch lockfile:
 - `npx vite build` exit 0; entry JS **276.12 kB / 86.41 kB gzip**, chunks unchanged (`Review` 57.08/16.17, `Estimate` 13.33/4.29, `DraftImport` 12.38/4.67, `Guide` 6.97/2.87, `Settings` 4.28/1.81).
 
 Pushed with the protected helper to `codex/STE-739`. Remaining gate: Han re-runs check 5 (import placeholder) and check 8 (first-use chunk) at the new head. Not claimed: no merge, deploy, release acceptance or authenticated production check.
+
+## F2 correction (after Han QA at 874331a2, 2026-11-24 cycle STE-768)
+
+Han's re-check at `874331a25cce19bfcacc5c8a0a4716a535aa2a7f` confirmed F1 fixed (placeholder shows on the first import open) and raised one new Medium finding: because the import dialog shared the page-level `Suspense`, the Home tree was hidden while the chunk loaded, so `DraftImport` captured `document.activeElement` as `<body>` and the first Escape/Cancel left focus on `BODY` instead of the "Import drafts" opener. A second open worked, so it was a first-open regression.
+
+Fix in `src/AIApp.tsx`: the import dialog moved into its own `Suspense` **outside** the page boundary, so Home stays mounted and the opener keeps focus while the chunk fetches. `src/styles.css` gains a small `.import-loading` overlay used as that boundary's fallback.
+
+Why not the plain in-flow `.screen-loading` fallback: measured at 390×844, an in-flow placeholder rendered at `top 877` with an 844 px viewport (below the fold, not visible) because it lands after the Home content. The overlay is measured visible at both widths:
+
+| Width | Fallback rect | Covers viewport | Home mounted during load | After load | Escape |
+| --- | --- | --- | --- | --- | --- |
+| 1440×900 | top 0 / bottom 900, `role="status"`, "Loading…" | yes | yes (h1 visible) | dialog "Import draft quotes", focus inside | opener `BUTTON` restored (`openerSameNode: true`) |
+| 390×844 | top 0 / bottom 844, `role="status"`, "Loading…" | yes | yes | dialog open, focus inside | opener `BUTTON` restored |
+
+Also measured: only `index-*.js` + `DraftImport-*.js` requested (chunk on first use, not up front), `scrollWidth == innerWidth` at both widths, no console errors. Loopback `vite preview` behind a local 900 ms `/assets/*.js` delay proxy, synthetic local state only; `server/index.mjs` on 127.0.0.1:4180 with `requiresLogin:false`.
+
+Verification at the corrected source commit with the branch lockfile: `npx tsc -b` exit 0; `npx vitest run` 22 files / 228 passed, 0 failed; `npx vite build` exit 0 — entry **276.28 kB / 86.42 kB gzip** (was 276.12/86.41 before the two-line fallback change), chunks unchanged (`DraftImport` 12.38/4.67).
+
+Not claimed: no merge, deploy, release acceptance or authenticated production check.
