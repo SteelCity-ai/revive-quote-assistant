@@ -1,10 +1,11 @@
 import {randomBytes} from 'node:crypto';
+import {clientAddress} from './identity.mjs';
 
 const cookieName='revive_quote_portal';
 const reply=(res,status,value)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(value));};
 export function portalUrl(value){const url=new URL(value);if(url.username||url.password||url.search||url.hash||(!['localhost','127.0.0.1'].includes(url.hostname)&&url.protocol!=='https:')||!['https:','http:'].includes(url.protocol))throw new Error('Portal URL must use HTTPS, or local HTTP for development.');return url;}
 async function body(req){let bytes=0;const chunks=[];for await(const c of req){bytes+=c.length;if(bytes>1000000)throw Object.assign(new Error('Quote is too large to send.'),{status:413});chunks.push(c);}try{return JSON.parse(Buffer.concat(chunks).toString());}catch{throw Object.assign(new Error('Use a valid JSON request.'),{status:400});}}
-export function createPortalHandler({baseUrl,origins,fetcher=fetch,secureCookies=false}){
+export function createPortalHandler({baseUrl,origins,fetcher=fetch,secureCookies=false,trustProxy=true}){
   const base=baseUrl?portalUrl(baseUrl):null,sessions=new Map(),attempts=new Map();
   const api=async(path,session,method='GET',payload)=>{
     const response=await fetcher(`${base.href.replace(/\/$/,'')}${path}`,{method,headers:{'Content-Type':'application/json',Origin:base.origin,...(session?{Cookie:session.cookie}:{})},body:payload===undefined?undefined:JSON.stringify(payload),redirect:'error',signal:AbortSignal.timeout(30000)});
@@ -42,8 +43,11 @@ export function createPortalHandler({baseUrl,origins,fetcher=fetch,secureCookies
       if(path==='/api/portal/login'&&req.method==='POST'){
         const loginOrigin=new URL(req.headers.origin);
         if(loginOrigin.protocol!=='https:'&&!['localhost','127.0.0.1'].includes(loginOrigin.hostname)){reply(res,400,{error:'Use an HTTPS app address for portal sign-in on a phone, or localhost on this computer.'});return true;}
-        const identity=req.socket.remoteAddress, recent=(attempts.get(identity)||[]).filter(t=>now-t<600000);if(recent.length>=10){reply(res,429,{error:'Too many sign-in attempts. Try again in ten minutes.'});return true;}attempts.set(identity,[...recent,now]);
         const input=await body(req);if(typeof input.email!=='string'||input.email.length>255||typeof input.password!=='string'||!input.password||input.password.length>1000){reply(res,400,{error:'Enter your portal email and password.'});return true;}
+        // Key on account plus address so one anonymous visitor cannot consume the
+        // office account's bucket (ADR 0001).
+        const key=`${input.email.trim().toLowerCase()}|${clientAddress(req,{trustProxy})}`;
+        const recent=(attempts.get(key)||[]).filter(t=>now-t<600000);if(recent.length>=10){reply(res,429,{error:'Too many sign-in attempts for this account. Try again in ten minutes.'});return true;}attempts.set(key,[...recent,now]);
         const {data:user,token}=await api('/auth/login',null,'POST',{email:input.email,password:input.password});
         if(!token)throw new Error('Portal login returned no session.');
         if(user.role!=='ADMIN'){reply(res,403,{error:'Use a portal administrator account to manage quotes.'});return true;}
