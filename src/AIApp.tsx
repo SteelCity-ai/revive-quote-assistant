@@ -1,21 +1,24 @@
-import {useEffect,useRef,useState} from 'react';
+import {lazy,Suspense,useEffect,useRef,useState} from 'react';
 import {Header} from './components';
 import Home from './Home';
-import Guide from './Guide';
-import Estimate from './Estimate';
-import Review from './Review';
-import Settings from './Settings';
 import Generating from './Generating';
+import VoicePanel from './VoicePanel';
 import {makeQuote,questions} from './domain';
 import type {JobType,Quote} from './domain';
 import {generate,fingerprint} from './ai';
 import {download,load,save} from './storage';
 import type {SavedState} from './storage';
-import VoicePanel from './VoicePanel';
-import DraftImport from './DraftImport';
 import {portalRequest,type PortalProject} from './portal';
 import {deleteQuoteHistory,loadQuoteHistory,mergeQuoteHistory,pruneOrphanHistory,restoreSnapshot,type QuoteSnapshot} from './history';
 import {duplicateQuote} from './duplicate';
+// Only the saved-quote list is needed on first paint. The intake form, pricing
+// screen and editor (which in turn pulls in history, snippets and import) load
+// on first use, so a phone on a weak signal downloads a much smaller bundle.
+const Guide=lazy(()=>import('./Guide'));
+const Estimate=lazy(()=>import('./Estimate'));
+const Review=lazy(()=>import('./Review'));
+const Settings=lazy(()=>import('./Settings'));
+const DraftImport=lazy(()=>import('./DraftImport'));
 export default function AIApp(){
   const [loaded]=useState(load);const [data,setData]=useState(loaded.data);const [storageError,setStorageError]=useState(loaded.error);
   const [activeId,setActiveId]=useState<string|null>(null);const [settings,setSettings]=useState(false);const [importOpen,setImportOpen]=useState(false);const [busy,setBusy]=useState(false);const [error,setError]=useState('');
@@ -66,5 +69,5 @@ export default function AIApp(){
   const duplicateDraft=(id:string)=>{const source=data.quotes.find(q=>q.id===id);if(!source)return;const copy=duplicateQuote(source,data.quotes);setData(d=>({...d,quotes:[copy,...d.quotes]}));setActiveId(copy.id);window.scrollTo({top:0});};
   const applyImported=(next:SavedState)=>{setData(next);setImportOpen(false);window.scrollTo({top:0});};
   return <><Header home={home} settings={()=>{cancel();setSettings(true);}} saved={!storageError}/>{storageError&&<div role="alert" className="storage-warning">{storageError}</div>}{historyError&&<div role="alert" className="storage-warning">Version history: {historyError}</div>}
-    {(busy||error)&&quote?<Generating error={error} retry={()=>void research(true)} cancel={cancel}/>:settings?<Settings pricing={data.pricing} change={pricing=>setData(d=>({...d,pricing}))} back={()=>setSettings(false)} backup={()=>download(`revive-quotes-backup-${new Date().toISOString().slice(0,10)}.json`,JSON.stringify(data,null,2))}/>:quote?quote.stage==='guide'?<Guide quote={quote} update={update} exit={home} connections={()=>setSettings(true)} finish={()=>void research()}/>:quote.stage==='pricing'?<Estimate quote={quote} update={update} regenerate={()=>void research(true)} back={()=>{update({stage:'guide',step:Math.min(quote.step,questions(quote.type,quote.answers).length-1)});window.scrollTo({top:0});}} next={()=>navigate('review')}/>:<Review quote={quote} update={update} edit={stage=>{update({stage,...(stage==='guide'?{step:0}:{})});window.scrollTo({top:0});}} home={home} remove={()=>{if(!activeId)return;const err=deleteQuoteHistory(activeId);setData(d=>({...d,quotes:d.quotes.filter(q=>q.id!==activeId)}));home();if(err)setStorageError(err);}} historySnapshots={historyState.snapshots} onCaptureSnapshot={captureSnapshot} onRestoreSnapshot={restoreFromSnapshot}/>:<Home quotes={data.quotes} start={start} resume={id=>{setActiveId(id);window.scrollTo({top:0});}} settings={()=>setSettings(true)} openImport={()=>setImportOpen(true)} duplicate={duplicateDraft}/>}<VoicePanel quote={quote??null} update={update} research={research} busy={busy} error={error} startVoiceQuote={voiceStart}/>{importOpen&&<DraftImport current={data} onImported={applyImported} onClose={()=>setImportOpen(false)}/>}</>;
+    <Suspense fallback={<div className="screen-loading" role="status" aria-live="polite">Loading…</div>}>{(busy||error)&&quote?<Generating error={error} retry={()=>void research(true)} cancel={cancel}/>:settings?<Settings pricing={data.pricing} change={pricing=>setData(d=>({...d,pricing}))} back={()=>setSettings(false)} backup={()=>download(`revive-quotes-backup-${new Date().toISOString().slice(0,10)}.json`,JSON.stringify(data,null,2))}/>:quote?quote.stage==='guide'?<Guide quote={quote} update={update} exit={home} connections={()=>setSettings(true)} finish={()=>void research()}/>:quote.stage==='pricing'?<Estimate quote={quote} update={update} regenerate={()=>void research(true)} back={()=>{update({stage:'guide',step:Math.min(quote.step,questions(quote.type,quote.answers).length-1)});window.scrollTo({top:0});}} next={()=>navigate('review')}/>:<Review quote={quote} update={update} edit={stage=>{update({stage,...(stage==='guide'?{step:0}:{})});window.scrollTo({top:0});}} home={home} remove={()=>{if(!activeId)return;const err=deleteQuoteHistory(activeId);setData(d=>({...d,quotes:d.quotes.filter(q=>q.id!==activeId)}));home();if(err)setStorageError(err);}} historySnapshots={historyState.snapshots} onCaptureSnapshot={captureSnapshot} onRestoreSnapshot={restoreFromSnapshot}/>:<Home quotes={data.quotes} start={start} resume={id=>{setActiveId(id);window.scrollTo({top:0});}} settings={()=>setSettings(true)} openImport={()=>setImportOpen(true)} duplicate={duplicateDraft}/>}</Suspense>{importOpen&&<Suspense fallback={<div className="import-loading" role="status" aria-live="polite"><span>Loading…</span></div>}><DraftImport current={data} onImported={applyImported} onClose={()=>setImportOpen(false)}/></Suspense>}<VoicePanel quote={quote??null} update={update} research={research} busy={busy} error={error} startVoiceQuote={voiceStart}/></>;
 }
